@@ -136,7 +136,7 @@ def train_arima_daily_2024(df, barcode):
             )
 
             # Previsão de 1 passo
-            forecast = model.predict(n_periods=1)[0]
+            forecast = model.predict(n_periods=1).iloc[0]
 
             # Valor real do dia (pode ser 0 se foi "forçado")
             real_value = df.loc[df["Date"] == current_day, "Quantity"].values[0]

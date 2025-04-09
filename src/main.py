@@ -1,5 +1,6 @@
 # main.py (exemplo simplificado)
 import os
+import traceback
 import pandas as pd
 from data_preparation import carregar_dados
 from train_arima import train_arima_daily_2024
@@ -20,6 +21,7 @@ def main():
             # df_2024 conterá todas as previsões diárias consolidadas para 2024 (se quiser usar)
         except Exception as e:
             logger.error(f"Erro no produto {barcode}: {e}")
+            logger.error(traceback.format_exc())
 
     logger.info("Finalizado processo diário de ARIMA.")
 
