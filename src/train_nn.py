@@ -87,8 +87,9 @@ def train_neural_network(df, barcode):
         ]"""
 
     layers_config = [
-        {"type": "LSTM", "units": 128, "activation": "relu", "dropout": 0.2, "return_sequences": True, "bidirectional": True},
-        {"type": "LSTM", "units": 64, "activation": "relu", "dropout": 0.1, "return_sequences": False},
+        {"type": "LSTM", "units": 256, "activation": "relu", "dropout": 0.3, "return_sequences": True, "bidirectional": True},
+        {"type": "LSTM", "units": 128, "activation": "relu", "dropout": 0.2, "return_sequences": True, "bidirectional": False},
+        {"type": "LSTM", "units": 64, "activation": "relu", "dropout": 0.2, "return_sequences": False},
     ]
 
     """Exemplo 3: Alterar learning rate, epochs e batch size:
@@ -97,7 +98,7 @@ def train_neural_network(df, barcode):
     epochs = 150            # Aumentar para mais oportunidades de aprendizado
     patience = 20           # Mais paciência para interromper o treinamento"""
 
-    learning_rate = 0.001   # Menor para aprendizado mais suave
+    learning_rate = 0.0001   # Menor para aprendizado mais suave
     batch_size = 32         # Batch maior para treinamento mais rápido, caso tenha recursos
     epochs = 1000            # Aumentar para mais oportunidades de aprendizado
     patience = 50           # Mais paciência para interromper o treinamento
@@ -160,15 +161,15 @@ def train_neural_network(df, barcode):
                 continue
 
             # Verificação ajustada (não mais <= TIME_STEPS)
-            if len(future_df) < 2:  # menos de 2 dias não faz sentido prever
-                logger.warning(f"{barcode} | Mês {month:02d} ignorado por ter menos de 2 dias válidos.")
+            if len(future_df) <= TIME_STEPS:
+                logger.warning(f"{barcode} | Mês {month:02d} ignorado: dados insuficientes para sequência completa.")
                 continue
 
             # A ideia é criar sequências menores se não houver dados suficientes
             steps = min(TIME_STEPS, len(future_df) - 1)
 
             # Criação de sequências mais robusta
-            X_future, y_real = create_sequences(future_df[features].values, future_df["Quantity"].values, time_steps=steps)
+            X_future, y_real = create_sequences(future_df[features].values, future_df["Quantity"].values, time_steps=TIME_STEPS)
 
             if len(X_future) == 0:
                 logger.warning(f"{barcode} | Nenhuma sequência válida no mês {month:02d}.")
@@ -178,7 +179,7 @@ def train_neural_network(df, barcode):
             y_pred = model.predict(X_future).flatten()
 
             # Ajustar alinhamento do DataFrame para exportar resultados corretamente
-            future_out = future_df.iloc[steps:].copy()
+            future_out = future_df.iloc[TIME_STEPS:].copy()
             future_out["prediction_nn"] = y_pred
             forecast_2024.append(future_out[["Date", "prediction_nn"]])
 
@@ -192,7 +193,7 @@ def train_neural_network(df, barcode):
             plot_nn_monthly(future_out, barcode, month)
 
             # Fine-tune incremental com dados reais
-            model.fit(X_future, y_real, epochs=10, batch_size=batch_size, verbose=1)
+            model.fit(X_future, y_real, epochs=100, batch_size=batch_size, verbose=1)
 
             # Calcula métricas
             metrics = calculate_metrics(y_real, y_pred)

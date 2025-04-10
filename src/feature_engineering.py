@@ -26,6 +26,12 @@ def create_features(df: pd.DataFrame, n_lags: int = 7) -> pd.DataFrame:
     df["returned_rate"] = df["ReturnedQuantity"] / (df["Quantity"] + 1e-5)
     df["profit_margin"] = (df["UnitValue"] - df["CostValue"]) / (df["UnitValue"] + 1e-5)
 
+    # variáveis adicionais para reforçar padrões temporais
+    df["day_of_year"] = df["Date"].dt.dayofyear
+    df["week_of_year"] = df["Date"].dt.isocalendar().week.astype(int)
+    df["start_month"] = (df["Date"].dt.day <= 3).astype(int)  # primeiros 3 dias do mês
+    df["end_month"] = (df["Date"].dt.day >= df["Date"].dt.days_in_month - 2).astype(int)  # últimos 3 dias do mês
+
     # Remove linhas iniciais com NaNs por causa dos shifts
     df = df.dropna()
 
