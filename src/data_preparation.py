@@ -18,32 +18,19 @@ def carregar_dados(pasta):
                 print(f"Erro ao carregar {arquivo}: {e}")
     return dados
 
-
-def generate_rolling_windows(df, window_size=395, train_size=365, step=30):
-    """
-    Gera janelas deslizantes para séries temporais.
-
-    Cada janela tem `window_size` dias no total:
-    - `train_size` dias para treino
-    - o restante para teste (ex: 30 dias)
-
-    Parâmetros:
-    - df: DataFrame com as colunas 'Date' e 'Quantity'
-    - window_size: tamanho total da janela
-    - train_size: tamanho da parte de treino
-    - step: passo de deslizamento (ex: 30 dias)
-
-    Retorna:
-    - Lista de dicionários com 'train' e 'test'
-    """
-    windows = []
+def generate_rolling_windows(df: pd.DataFrame, train_days=365, test_days=31, step_days=30):
     df = df.sort_values("Date").reset_index(drop=True)
-    for start in range(0, len(df) - window_size + 1, step):
-        end = start + window_size
-        window_df = df.iloc[start:end].copy()
-        if len(window_df) < window_size:
-            continue
-        train = window_df.iloc[:train_size]
-        test = window_df.iloc[train_size:]
-        windows.append({"train": train, "test": test})
+    
+    windows = []
+    start = 0
+    total_days = train_days + test_days
+
+    while start + total_days <= len(df):
+        df_train = df.iloc[start:start + train_days].copy()
+        df_test = df.iloc[start + train_days:start + total_days].copy()
+
+        windows.append({"train": df_train, "test": df_test})
+        
+        start += step_days  # Avança exatamente 30 dias por vez
+
     return windows
