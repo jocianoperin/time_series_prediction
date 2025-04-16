@@ -175,4 +175,6 @@ cython_debug/
 
 # Data
 *.csv
-data/
+data/predictions/
+data/metrics/
+data/plots/
