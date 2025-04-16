@@ -11,6 +11,8 @@ from data_preparation import generate_rolling_windows
 logger = get_logger(__name__)
 
 def train_xgboost(df, barcode):
+    logger.info(f"{barcode} | Iniciando treinamento XGBoost.")
+
     df = df.dropna().sort_values("Date").reset_index(drop=True)
 
     # Separação de treino e predição
@@ -37,10 +39,17 @@ def train_xgboost(df, barcode):
 
     results = []
     windows = generate_rolling_windows(df_treino)
+    logger.info(f"{barcode} | Número de janelas geradas para rolling window: {len(windows)}.")
 
     # Rolling windows de 2019 a 2023
     for i, w in enumerate(windows):
         train, test = w["train"], w["test"]
+
+        logger.info(
+            f"{barcode} | Iniciando treinamento na Janela {i+1}: "
+            f"Treino de {train['Date'].min()} a {train['Date'].max()}, "
+            f"Teste de {test['Date'].min()} a {test['Date'].max()}"
+        )
 
         scaler = StandardScaler()
         X_train = scaler.fit_transform(train[features])
@@ -74,6 +83,8 @@ def train_xgboost(df, barcode):
         test_out["prediction_xgboost"] = y_pred
         results.append(test_out)
 
+    logger.info(f"{barcode} | Finalizadas as janelas rolling. Iniciando predição mensal para 2024.")
+
     # Previsão mês a mês de 2024
     forecast_2024 = []
     scaler = StandardScaler()
@@ -91,8 +102,10 @@ def train_xgboost(df, barcode):
     for month in range(1, 13):
         df_month = df_2024[df_2024["Date"].dt.month == month].copy()
         if df_month.empty:
+            logger.warning(f"{barcode} | XGBoost - Mês {month:02d} ignorado: nenhum dado disponível.")
             continue
 
+        logger.info(f"{barcode} | Iniciando predição para o mês {month:02d}/2024.")
         X_future = scaler.transform(df_month[features])
         y_real = df_month["Quantity"].values
         dfuture = xgb.DMatrix(X_future)
@@ -111,10 +124,15 @@ def train_xgboost(df, barcode):
         output_csv = df_result[["Date", "Quantity", "prediction_xgboost"]].copy()
         output_csv.rename(columns={"Quantity": "real", "prediction_xgboost": "forecast"}, inplace=True)
 
-        os.makedirs("data/predictions", exist_ok=True)
-        output_csv.to_csv(f"data/predictions/XGBoost_daily_{barcode}_2024_{month:02d}.csv", index=False)
+        # >>> Ajuste para que cada barcode tenha sua subpasta em data/predictions <<<
+        out_dir = f"data/predictions/XGBoost/{barcode}"
+        os.makedirs(out_dir, exist_ok=True)
+        csv_filename = f"XGBoost_daily_{barcode}_2024_{month:02d}.csv"
+        output_csv.to_csv(os.path.join(out_dir, csv_filename), index=False)
+        logger.info(f"{barcode} | CSV salvo: {os.path.join(out_dir, csv_filename)}")
 
         plot_xgboost_monthly(df_result, barcode, month)
+        logger.info(f"{barcode} | Gráfico salvo para {month:02d}/2024.")
 
         # Fine-tune incremental com dados reais
         booster = xgb.train(
@@ -124,6 +142,9 @@ def train_xgboost(df, barcode):
             xgb_model=booster,
             verbose_eval=False
         )
+        logger.info(f"{barcode} | Fine-tune incremental realizado com dados de {month:02d}/2024.")
+
+    logger.info(f"{barcode} | Treinamento XGBoost concluído.")
 
     return pd.concat(results), metrics, pd.concat(forecast_2024)
 

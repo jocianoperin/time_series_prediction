@@ -36,13 +36,13 @@ def main():
             df_arima.rename(columns={"forecast": "prediction_arima", "real": "Quantity"}, inplace=True)
             arima_metrics = calculate_metrics(df_arima["Quantity"], df_arima["prediction_arima"])
             results["arima"] = {"metrics": arima_metrics, "predictions": df_arima}
-            logger.info("Finalizado processo diário de ARIMA.")
+            logger.info("Finalizado processo diário de ARIMA.")"""
 
             # XGBoost
             logger.info("Iniciando pipeline XGBoost diário 2024...")
             df_xgb_all, xgb_metrics, df_xgb_2024 = train_xgboost(df, barcode)
             results["xgboost"] = {"metrics": xgb_metrics, "predictions": df_xgb_2024}
-            logger.info("Finalizado processo diário de XGBoost.")"""
+            logger.info("Finalizado processo diário de XGBoost.")
 
             # LSTM
             logger.info("Iniciando pipeline LSTM diário 2024...")

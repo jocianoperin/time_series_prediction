@@ -38,7 +38,6 @@ logger = get_logger(__name__)
 # ========================================================= #
 TIME_STEPS = 30  # número de passos usados nas sequências
 
-
 def create_sequences(X, y, time_steps: int = TIME_STEPS):
     """
     Constrói pares (X_seq, y_target) a partir de séries multivariadas.
@@ -256,6 +255,7 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
     # ---------------------------------------------------------------- #
     # ---------- 3) PREDIÇÃO DIÁRIA PARA TODO 2024 -------------------- #
     # ---------------------------------------------------------------- #
+
     if len(df_treino) <= TIME_STEPS:
         logger.warning(f"{barcode} | Histórico insuficiente para predição 2024.")
         return pd.DataFrame(), {}, pd.DataFrame()
@@ -314,9 +314,11 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
     # ---------------------------------------------------------------- #
     # ---------- 4) EXPORTAÇÃO DE CSVs + GRÁFICOS --------------------- #
     # ---------------------------------------------------------------- #
-    os.makedirs("data/predictions", exist_ok=True)
+    # Ajuste para criar subpasta para cada barcode em data/predictions/NN
+    out_dir = f"data/predictions/NN/{barcode}"
+    os.makedirs(out_dir, exist_ok=True)
     for month, df_month in df_daily.groupby(df_daily["date"].dt.month):
-        csv_path = f"data/predictions/NN_daily_{barcode}_2024_{month:02d}.csv"
+        csv_path = os.path.join(out_dir, f"NN_daily_{barcode}_2024_{month:02d}.csv")
         df_month.to_csv(csv_path, index=False)
         plot_nn_monthly(df_month, barcode, month)
 
