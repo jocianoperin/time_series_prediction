@@ -174,7 +174,8 @@ cython_debug/
 .pypirc
 
 # Data
-*.csv
+#*.csv
 data/predictions/
 data/metrics/
 data/plots/
+data/raw/T
