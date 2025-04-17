@@ -1,6 +1,8 @@
 #!/bin/bash
 
-# === INSTALA MINICONDA ===
+PROJNAME=${PROJECT_NAME:-time_series_prediction}
+WORKDIR="/workspace/$PROJNAME"
+
 if [ ! -d "/root/miniconda3" ]; then
   echo "[INFO] Instalando Miniconda..."
   wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
@@ -8,22 +10,19 @@ if [ ! -d "/root/miniconda3" ]; then
   echo 'export PATH="/root/miniconda3/bin:$PATH"' >> ~/.bashrc
 fi
 
-# === ATIVA CONDA ===
 source /root/miniconda3/etc/profile.d/conda.sh
 conda init bash
 
-# === PREPARA AMBIENTE ===
-cd /workspace/time_series_prediction
+cd "$WORKDIR" || { echo "[ERRO] Diretório do projeto não encontrado: $WORKDIR"; exit 1; }
+
 if [ -f "environment.yml" ]; then
   conda env create -n tsenv -f environment.yml || conda env update -n tsenv -f environment.yml --prune
 else
   conda create -n tsenv python=3.10 -y
   conda activate tsenv
-  pip install -r requirements.txt
+  if [ -f "requirements.txt" ]; then
+    pip install -r requirements.txt
+  fi
 fi
 
-# === ATIVA E RODA MAIN ===
-source /root/miniconda3/etc/profile.d/conda.sh
-conda activate tsenv
-cd /workspace/time_series_prediction
-python main.py
+echo "[✔] Ambiente tsenv pronto e ativado. Projeto disponível em $WORKDIR"
