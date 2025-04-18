@@ -15,11 +15,14 @@ fi
 
 # === MOSTRA A CHAVE PARA INSERIR MANUALMENTE NA VAST ===
 echo ""
-echo "[⚠️] Copie a chave abaixo e cole no terminal da instância Vast.ai:"
+echo "[⚠️ ] Copie a chave abaixo e cole no terminal da instância Vast.ai:"
 echo "--------------------------------------------------------------"
 cat "$KEY.pub"
 echo "--------------------------------------------------------------"
 read -p "[ENTER] Pressione Enter após inserir a chave pública via terminal da instância..."
+echo "[INFO] Executando handshake via SSH para registrar fingerprint local..."
+ssh -p $PORT root@$IP -L 8080:localhost:8080 -N &
+sleep 2
 
 # === TESTA SE A CHAVE FUNCIONA ===
 echo "[INFO] Testando acesso via chave SSH..."

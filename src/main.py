@@ -30,15 +30,15 @@ def main():
             # Rodar todos os modelos
             results = {}
 
-            """# ARIMA
+            # ARIMA
             logger.info("Iniciando pipeline ARIMA diário 2024...")
             df_arima = train_arima_daily_2024(df, barcode)
             df_arima.rename(columns={"forecast": "prediction_arima", "real": "Quantity"}, inplace=True)
             arima_metrics = calculate_metrics(df_arima["Quantity"], df_arima["prediction_arima"])
             results["arima"] = {"metrics": arima_metrics, "predictions": df_arima}
-            logger.info("Finalizado processo diário de ARIMA.")"""
+            logger.info("Finalizado processo diário de ARIMA.")
 
-            # XGBoost
+            """# XGBoost
             logger.info("Iniciando pipeline XGBoost diário 2024...")
             df_xgb_all, xgb_metrics, df_xgb_2024 = train_xgboost(df, barcode)
             results["xgboost"] = {"metrics": xgb_metrics, "predictions": df_xgb_2024}
@@ -48,7 +48,7 @@ def main():
             logger.info("Iniciando pipeline LSTM diário 2024...")
             df_nn_all, nn_metrics, df_nn_2024 = train_neural_network(df, barcode)
             results["nn"] = {"metrics": nn_metrics, "predictions": df_nn_2024}
-            logger.info("Finalizado processo diário de LSTM.")
+            logger.info("Finalizado processo diário de LSTM.")"""
 
             """# Prophet
             logger.info("Iniciando pipeline Prophet diário 2024...")
