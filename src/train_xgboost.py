@@ -10,6 +10,20 @@ from data_preparation import generate_rolling_windows
 
 logger = get_logger(__name__)
 
+GPU_ERROR_PATTERNS = (
+    "cudaErrorInitializationError",
+    "ctx_->Ordinal()",
+    "Must have at least one device",
+)
+
+def _fallback_to_cpu(e, params, barcode, where):
+    if any(pat in str(e) for pat in GPU_ERROR_PATTERNS):
+        logger.warning(f"{barcode} | GPU falhou em {where} → usando CPU")
+        params["tree_method"] = "hist"
+        params["device"]   = "cpu"
+        return True
+    return False
+
 def train_xgboost(df, barcode):
     logger.info(f"{barcode} | Iniciando treinamento XGBoost.")
 
@@ -32,9 +46,11 @@ def train_xgboost(df, barcode):
         "min_child_weight": 3,
         "gamma": 0.1,
         "lambda": 1.0,
-        "tree_method": "hist",
-        "device": "cuda",
-        "random_state": 42
+        # — nova sintaxe GPU —
+        "tree_method": "hist",     # algoritmo
+        "device": "cuda",          # executa em GPU
+        # "random_state": 42
+        "verbosity": 0,            # silencia prints do backend
     }
 
     results = []
@@ -61,14 +77,28 @@ def train_xgboost(df, barcode):
         dtest = xgb.DMatrix(X_test, label=y_test)
 
         evals = [(dtrain, "train"), (dtest, "eval")]
-        booster = xgb.train(
-            params=params,
-            dtrain=dtrain,
-            num_boost_round=10000,
-            evals=evals,
-            early_stopping_rounds=200,
-            verbose_eval=False
-        )
+        try:
+            booster = xgb.train(
+                params=params,
+                dtrain=dtrain,
+                num_boost_round=10000,
+                evals=evals,
+                early_stopping_rounds=200,
+                verbose_eval=False
+            )
+        except xgb.core.XGBoostError as e:
+            if _fallback_to_cpu(e, params, barcode, f"janela {i+1}"):
+                logger.warning(f"{barcode} | GPU indisponível → voltando ao CPU")
+                booster = xgb.train(
+                    params=params,
+                    dtrain=dtrain,
+                    num_boost_round=10000,
+                    evals=evals,
+                    early_stopping_rounds=200,
+                    verbose_eval=False
+                )
+            else:
+                raise
 
         y_pred = booster.predict(dtest)
         metrics = calculate_metrics(y_test, y_pred)
@@ -92,12 +122,24 @@ def train_xgboost(df, barcode):
     y_train_full = df_treino["Quantity"].values
     dtrain_full = xgb.DMatrix(X_train_full, label=y_train_full)
 
-    booster = xgb.train(
-        params=params,
-        dtrain=dtrain_full,
-        num_boost_round=10000,
-        verbose_eval=False
-    )
+    try:
+        booster = xgb.train(
+            params=params,
+            dtrain=dtrain_full,
+            num_boost_round=10000,
+            verbose_eval=False
+        )
+    except xgb.core.XGBoostError as e:
+        if _fallback_to_cpu(e, params, barcode, f"janela {i+1}"):
+            logger.warning(f"{barcode} | GPU indisponível → voltando ao CPU")
+            booster = xgb.train(
+                params=params,
+                dtrain=dtrain_full,
+                num_boost_round=10000,
+                verbose_eval=False
+            )
+        else:
+            raise
 
     for month in range(1, 13):
         df_month = df_2024[df_2024["Date"].dt.month == month].copy()
@@ -135,13 +177,27 @@ def train_xgboost(df, barcode):
         logger.info(f"{barcode} | Gráfico salvo para {month:02d}/2024.")
 
         # Fine-tune incremental com dados reais
-        booster = xgb.train(
-            params=params,
-            dtrain=xgb.DMatrix(X_future, label=y_real),
-            num_boost_round=10000,
-            xgb_model=booster,
-            verbose_eval=False
-        )
+        try:
+            booster = xgb.train(
+                params=params,
+                dtrain=xgb.DMatrix(X_future, label=y_real),
+                num_boost_round=10000,
+                xgb_model=booster,
+                verbose_eval=False
+            )
+        except xgb.core.XGBoostError as e:
+            if _fallback_to_cpu(e, params, barcode, f"janela {i+1}"):
+                logger.warning(f"{barcode} | GPU indisponível → voltando ao CPU")
+                booster = xgb.train(
+                    params=params,
+                    dtrain=xgb.DMatrix(X_future, label=y_real),
+                    num_boost_round=10000,
+                    xgb_model=booster,
+                    verbose_eval=False
+                )
+            else:
+                raise
+
         logger.info(f"{barcode} | Fine-tune incremental realizado com dados de {month:02d}/2024.")
 
     logger.info(f"{barcode} | Treinamento XGBoost concluído.")

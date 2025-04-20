@@ -1,29 +1,23 @@
 import logging
 import os
 
-def get_logger(name: str) -> logging.Logger:
-    # Cria diretório de logs se não existir
+def get_logger(name: str, log_file: str | None = None) -> logging.Logger:
     os.makedirs("logs", exist_ok=True)
 
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
 
-    # Formato do log
-    formatter = logging.Formatter(
-        "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
-    )
+    fmt = logging.Formatter("%(asctime)s | %(processName)s | %(levelname)s | %(message)s")
 
-    # Handler para log em arquivo
-    file_handler = logging.FileHandler("logs/pipeline.log", mode="a")
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(formatter)
+    # --- FILE HANDLER -----------------------------------------
+    log_path = log_file or "logs/pipeline.log"
+    file_handler = logging.FileHandler(log_path, mode="a")
+    file_handler.setFormatter(fmt)
 
-    # Handler para log no console (opcional)
+    # --- CONSOLE HANDLER (opcional) ---------------------------
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
+    console_handler.setFormatter(fmt)
 
-    # Evita adicionar múltiplos handlers ao mesmo logger
     if not logger.handlers:
         logger.addHandler(file_handler)
         logger.addHandler(console_handler)
