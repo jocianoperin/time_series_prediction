@@ -21,7 +21,8 @@ cat "$KEY.pub"
 echo "--------------------------------------------------------------"
 read -p "[ENTER] Pressione Enter após inserir a chave pública via terminal da instância..."
 echo "[INFO] Executando handshake via SSH para registrar fingerprint local..."
-ssh -p $PORT root@$IP -L 8080:localhost:8080 -N &
+#ssh -p $PORT root@$IP -L 8080:localhost:8080 -N &
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p $PORT root@$IP -L 8080:localhost:8080 -N &
 sleep 2
 
 # === TESTA SE A CHAVE FUNCIONA ===
