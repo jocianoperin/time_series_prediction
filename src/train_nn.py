@@ -57,7 +57,7 @@ gpus = tf.config.list_physical_devices("GPU")
 if gpus:
     try:
         tf.config.set_logical_device_configuration(
-            gpus[0], [tf.config.LogicalDeviceConfiguration(memory_limit=3584)]
+            gpus[0], [tf.config.LogicalDeviceConfiguration(memory_limit=2048)]
         )
     except RuntimeError:
         # A configuração só funciona se a GPU ainda não foi inicializada
