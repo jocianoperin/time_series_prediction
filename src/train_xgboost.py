@@ -49,8 +49,8 @@ def train_xgboost(df, barcode):
         # — nova sintaxe GPU —
         "tree_method": "hist",     # algoritmo
         "device": "cuda",          # executa em GPU
-        # "random_state": 42
         "verbosity": 0,            # silencia prints do backend
+        "seed": 42,                # semente para reprodutibilidade
     }
 
     results = []
@@ -73,10 +73,16 @@ def train_xgboost(df, barcode):
         X_test = scaler.transform(test[features])
         y_test = test["Quantity"].values
 
-        dtrain = xgb.DMatrix(X_train, label=y_train)
-        dtest = xgb.DMatrix(X_test, label=y_test)
+                # split 80/20 do train para early stopping
+        split_idx = int(len(X_train) * 0.8)
+        X_tr, y_tr = X_train[:split_idx], y_train[:split_idx]
+        X_val, y_val = X_train[split_idx:], y_train[split_idx:]
 
-        evals = [(dtrain, "train"), (dtest, "eval")]
+        dtrain = xgb.DMatrix(X_tr,    label=y_tr)
+        dval   = xgb.DMatrix(X_val,   label=y_val)
+        dtest  = xgb.DMatrix(X_test,  label=y_test)
+
+        evals = [(dtrain, "train"), (dval, "valid"), (dtest, "eval")]
         try:
             booster = xgb.train(
                 params=params,
@@ -92,8 +98,8 @@ def train_xgboost(df, barcode):
                 booster = xgb.train(
                     params=params,
                     dtrain=dtrain,
-                    num_boost_round=10000,
                     evals=evals,
+                    num_boost_round=10000,
                     early_stopping_rounds=200,
                     verbose_eval=False
                 )
@@ -122,20 +128,33 @@ def train_xgboost(df, barcode):
     y_train_full = df_treino["Quantity"].values
     dtrain_full = xgb.DMatrix(X_train_full, label=y_train_full)
 
+    # split 80/20 do train_full para early stopping
+    split_idx_full = int(len(X_train_full) * 0.8)
+    X_tr_f, y_tr_f = X_train_full[:split_idx_full], y_train_full[:split_idx_full]
+    X_val_f, y_val_f = X_train_full[split_idx_full:], y_train_full[split_idx_full:]
+
+    dtrain = xgb.DMatrix(X_tr_f,  label=y_tr_f)
+    dval   = xgb.DMatrix(X_val_f,  label=y_val_f)
+
+    evals_full = [(dtrain, "train"), (dval, "valid")]
     try:
         booster = xgb.train(
             params=params,
-            dtrain=dtrain_full,
+            dtrain=dtrain,
             num_boost_round=10000,
+            evals=evals_full,
+            early_stopping_rounds=200,
             verbose_eval=False
         )
     except xgb.core.XGBoostError as e:
-        if _fallback_to_cpu(e, params, barcode, f"janela {i+1}"):
-            logger.warning(f"{barcode} | GPU indisponível → voltando ao CPU")
+        if _fallback_to_cpu(e, params, barcode, "re-treino global"):
+            logger.warning(f"{barcode} | GPU indisponível no re-treino global → voltando ao CPU")
             booster = xgb.train(
                 params=params,
-                dtrain=dtrain_full,
+                dtrain=dtrain,
+                evals=evals_full,
                 num_boost_round=10000,
+                early_stopping_rounds=200,
                 verbose_eval=False
             )
         else:

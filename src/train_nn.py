@@ -13,11 +13,17 @@ na sequência, preservando TODOS os comentários descritivos.
 # IMPORTS PRINCIPAIS
 # ================================================================
 import os
+import random
 import gc
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-import matplotlib.pyplot as plt
+
+# FIX REPRODUCIBILIDADE
+random.seed(42)
+np.random.seed(42)
+tf.random.set_seed(42)
+
 
 from sklearn.preprocessing import StandardScaler
 from tensorflow.keras.callbacks import EarlyStopping
@@ -266,6 +272,7 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
         model_tmp.fit(
             X_train, y_train,
             validation_split=0.2,
+            shuffle=False,
             epochs=epochs,
             batch_size=batch_size,
             callbacks=[es],
@@ -297,14 +304,21 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
         df_treino[features].values, df_treino["Quantity"].values
     )
     model = build_lstm_model((X_hist.shape[1], X_hist.shape[2]), layers_cfg, lr)
+
+    # early stopping com validação 20% e sem shuffle
+    es_global = EarlyStopping(monitor="val_loss", patience=patience, restore_best_weights=True)
     model.fit(
         X_hist, y_hist,
+        validation_split=0.2,
+        shuffle=False,
         epochs=epochs,
         batch_size=batch_size,
-        callbacks=[EarlyStopping(monitor="loss", patience=patience)],
+        callbacks=[es_global],
         verbose=0,
     )
-    logger.info(f"{barcode} | NN – re‑treino global concluído")
+
+    logger.info(f"{barcode} | NN – re-treino global concluído")
+
 
     # ---------- 4) WALK‑FORWARD 2024 + FINE‑TUNE MENSAL ----------
     df_full = pd.concat([df_treino, df_2024]).reset_index(drop=True)
