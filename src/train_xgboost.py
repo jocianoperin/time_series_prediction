@@ -73,7 +73,13 @@ def train_xgboost(df, barcode):
         X_test = scaler.transform(test[features])
         y_test = test["Quantity"].values
 
-                # split 80/20 do train para early stopping
+        # Diagnóstico: verifica correlação para detectar possíveis vazamentos
+        for idx, col in enumerate(features):
+            corr = np.corrcoef(X_train[:, idx], y_train)[0, 1]
+            if abs(corr) > 0.99:
+                logger.warning(f"{barcode} | Alta correlação no recurso {col}: {corr:.3f}")
+
+        # split 80/20 do train para early stopping
         split_idx = int(len(X_train) * 0.8)
         X_tr, y_tr = X_train[:split_idx], y_train[:split_idx]
         X_val, y_val = X_train[split_idx:], y_train[split_idx:]
@@ -118,6 +124,12 @@ def train_xgboost(df, barcode):
         test_out = test[["Date", "Quantity"]].copy()
         test_out["prediction_xgboost"] = y_pred
         results.append(test_out)
+
+    # Baseline naïve: previsão = valor do dia anterior
+    naive = df_treino["Quantity"].shift(1).dropna()
+    y_true_naive = df_treino["Quantity"].iloc[1:].values
+    baseline_mae = np.mean(np.abs(y_true_naive - naive.values))
+    logger.info(f"{barcode} | Baseline naïve MAE (treino): {baseline_mae:.2f}")
 
     logger.info(f"{barcode} | Finalizadas as janelas rolling. Iniciando predição mensal para 2024.")
 

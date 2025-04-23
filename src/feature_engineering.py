@@ -5,6 +5,10 @@ def create_features(df: pd.DataFrame, n_lags: int = 7) -> pd.DataFrame:
     df = df.copy()
     df = df.sort_values("Date")
 
+    # ——— Evita vazamento: remove TotalValue (que inclui Quantity do mesmo dia)
+    if "TotalValue" in df.columns:
+        df.drop(columns=["TotalValue"], inplace=True)
+
     # Data/time features
     df["day_of_week"] = df["Date"].dt.dayofweek
     df["month"] = df["Date"].dt.month
