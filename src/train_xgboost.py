@@ -202,10 +202,11 @@ def train_xgboost(df, barcode):
         logger.info(f"{barcode} | CSV salvo: {os.path.join(out_dir, csv_filename)}")
 
         plot_xgboost_monthly(
-            df_result.rename(columns={"forecast": "prediction_xgboost"}),
+            df_result,
             barcode,
             month
         )
+
 
         logger.info(f"{barcode} | Gráfico salvo para {month:02d}/2024.")
 
