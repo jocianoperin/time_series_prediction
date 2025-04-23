@@ -359,7 +359,8 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
 
     for month, df_m in df_daily.groupby(df_daily["date"].dt.month):
         csv_path = os.path.join(out_dir, f"NN_daily_{barcode}_2024_{month:02d}.csv")
-        df_m[["date", "real", "forecast"]].to_csv(csv_path, index=False)
+        df_m[["date", "real", "forecast", "mae", "rmse", "mape", "smape"]].to_csv(csv_path, index=False)
+
         plot_nn_monthly(df_m, barcode, month)
         logger.info(f"{barcode} | NN – CSV+plot salvos para {month:02d}/2024")
 
@@ -379,7 +380,10 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
     del model
     free_gpu_memory()
 
-    return df_roll, nn_metrics_2024, df_daily[["date", "forecast"]]
+    return df_roll, nn_metrics_2024, (
+        df_daily.rename(columns={"date": "Date"})[["Date", "forecast"]]
+    )
+
 
 # ========================================================= #
 # --------------  FUNÇÃO DE PLOTAGEM MENSAL --------------- #

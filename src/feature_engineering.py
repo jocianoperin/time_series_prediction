@@ -23,7 +23,7 @@ def create_features(df: pd.DataFrame, n_lags: int = 7) -> pd.DataFrame:
     # Taxas derivadas
     df["discount_rate"] = df["Discount"] / (df["UnitValue"] + df["Discount"])
     df["increase_rate"] = df["Increase"] / (df["UnitValue"] + 1e-5)
-    df["returned_rate"] = df["ReturnedQuantity"] / (df["Quantity"] + 1e-5)
+    df["returned_rate"]  = df["ReturnedQuantity"].shift(1) / (df["lag_1"] + 1e-5)
     df["profit_margin"] = (df["UnitValue"] - df["CostValue"]) / (df["UnitValue"] + 1e-5)
 
     # variáveis adicionais para reforçar padrões temporais

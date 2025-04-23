@@ -160,11 +160,20 @@ def train_xgboost(df, barcode):
         )
 
         df_result = df_month[["Date", "Quantity"]].copy()
-        df_result["prediction_xgboost"] = y_pred
-        forecast_2024.append(df_result[["Date", "prediction_xgboost"]])
+        df_result["forecast"] = y_pred
 
-        output_csv = df_result[["Date", "Quantity", "prediction_xgboost"]].copy()
-        output_csv.rename(columns={"Quantity": "real", "prediction_xgboost": "forecast"}, inplace=True)
+        # métricas linha a linha
+        df_result["mae"]   = np.abs(df_result["Quantity"] - df_result["forecast"])
+        df_result["rmse"]  = np.sqrt((df_result["Quantity"] - df_result["forecast"])**2)
+        df_result["ape"]   = df_result["mae"] / df_result["Quantity"].replace(0, np.nan)
+        df_result["mape"]  = df_result["ape"] * 100
+        df_result["smape"] = (df_result["mae"] / ( (df_result["Quantity"].abs() + df_result["forecast"].abs())/2 ).replace(0, np.nan)) * 100
+
+        forecast_2024.append(df_result[["Date", "forecast"]])
+        
+        output_csv = df_result[["Date", "Quantity", "forecast", "mae", "rmse", "mape", "smape"]].copy()
+
+        output_csv.rename(columns={"Quantity": "real"}, inplace=True)
 
         # >>> Ajuste para que cada barcode tenha sua subpasta em data/predictions <<<
         out_dir = f"data/predictions/XGBoost/{barcode}"
@@ -173,7 +182,12 @@ def train_xgboost(df, barcode):
         output_csv.to_csv(os.path.join(out_dir, csv_filename), index=False)
         logger.info(f"{barcode} | CSV salvo: {os.path.join(out_dir, csv_filename)}")
 
-        plot_xgboost_monthly(df_result, barcode, month)
+        plot_xgboost_monthly(
+            df_result.rename(columns={"forecast": "prediction_xgboost"}),
+            barcode,
+            month
+        )
+
         logger.info(f"{barcode} | Gráfico salvo para {month:02d}/2024.")
 
         # Fine-tune incremental com dados reais
@@ -212,12 +226,12 @@ def plot_xgboost_monthly(df_plot, barcode, month):
     df_plot = df_plot.sort_values("Date")
     plt.figure(figsize=(10, 5))
     plt.plot(df_plot["Date"], df_plot["Quantity"], label="Real", marker="o")
-    plt.plot(df_plot["Date"], df_plot["prediction_xgboost"], label="Previsto", marker="x")
+    plt.plot(df_plot["Date"], df_plot["forecast"], label="Previsto", marker="x")
 
     # valores explícitos no gráfico
     for x, y in zip(df_plot["Date"], df_plot["Quantity"]):
         plt.text(x, y, f"{y:.0f}", ha="center", va="bottom", fontsize=8)
-    for x, y in zip(df_plot["Date"], df_plot["prediction_xgboost"]):
+    for x, y in zip(df_plot["Date"], df_plot["forecast"]):
         plt.text(x, y, f"{y:.0f}", ha="center", va="bottom", fontsize=8, color="blue")
 
     plt.title(f"Comparação Real vs. XGBoost - {barcode} - {month:02d}/2024")
