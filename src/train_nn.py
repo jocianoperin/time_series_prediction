@@ -16,6 +16,7 @@ import os
 import random
 import matplotlib.pyplot as plt
 import gc
+import joblib
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -42,7 +43,7 @@ from tensorflow.keras.layers import (
 )
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
-
+from tensorflow.keras.models import load_model as keras_load_model
 from utils.logging_config import get_logger
 from utils.metrics import calculate_metrics
 from data_preparation import generate_rolling_windows
@@ -215,13 +216,37 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
     df = df.dropna().sort_values("Date").reset_index(drop=True)
 
     df_treino = df[df["Date"] < "2024-01-01"].copy()
+        # ---------------- ARQUIVOS DE MODELO -----------------
+    model_dir   = f"models/NN/{barcode}"
+    model_path  = os.path.join(model_dir, f"nn_{barcode}.h5")
+    scaler_path = os.path.join(model_dir, "scaler.pkl")
+
+    model_loaded  = None
+    scaler_loaded = None
+    if os.path.isfile(model_path) and os.path.isfile(scaler_path):
+        try:
+            model_loaded  = keras_load_model(model_path, compile=False)
+            scaler_loaded = joblib.load(scaler_path)
+            logger.info(f"{barcode} | Rede NN carregada de disco. "
+                        f"Pulando re-treino global.")
+        except Exception as e:
+            logger.warning(f"{barcode} | Falha ao carregar rede salva: {e}")
+            model_loaded  = None
+            scaler_loaded = None
+
     df_2024   = df[df["Date"].dt.year == 2024].copy()
 
     features = [c for c in df.columns if c not in {"Date", "Quantity"}]
 
-    scaler = StandardScaler()
-    df_treino[features] = scaler.fit_transform(df_treino[features])
-    df_2024[features]   = scaler.transform(df_2024[features])
+    if scaler_loaded is None:
+        scaler = StandardScaler()
+        df_treino[features] = scaler.fit_transform(df_treino[features])
+    else:
+        scaler = scaler_loaded
+        df_treino[features] = scaler.transform(df_treino[features])
+
+    df_2024[features] = scaler.transform(df_2024[features])
+
 
     # ---------- 2) AVALIAÇÃO ROLLING 365×31 ----------------------
     windows = generate_rolling_windows(df_treino, train_days=365, test_days=31)
@@ -304,7 +329,12 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
     X_hist, y_hist = create_sequences(
         df_treino[features].values, df_treino["Quantity"].values
     )
-    model = build_lstm_model((X_hist.shape[1], X_hist.shape[2]), layers_cfg, lr)
+
+    if model_loaded is None:
+        model = build_lstm_model((X_hist.shape[1], X_hist.shape[2]),
+                                 layers_cfg, lr)
+    else:
+        model = model_loaded
 
     # early stopping com validação 20% e sem shuffle
     es_global = EarlyStopping(monitor="val_loss", patience=patience, restore_best_weights=True)
@@ -413,6 +443,12 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
 
     del model
     free_gpu_memory()
+
+    # ---------------- SALVAMENTO -------------------------
+    os.makedirs(model_dir, exist_ok=True)
+    model.save(model_path, include_optimizer=False)
+    joblib.dump(scaler, scaler_path)
+    logger.info(f"{barcode} | Rede NN + scaler salvos em {model_dir}")
 
     return df_roll, nn_metrics_2024, (
         df_daily.rename(columns={"date": "Date"})[["Date", "real", "forecast"]]

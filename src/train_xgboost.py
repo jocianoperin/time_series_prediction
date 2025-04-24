@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import xgboost as xgb
 import matplotlib.pyplot as plt
+import joblib
 import os
 from sklearn.preprocessing import StandardScaler
 from utils.logging_config import get_logger
@@ -26,6 +27,22 @@ def _fallback_to_cpu(e, params, barcode, where):
 
 def train_xgboost(df, barcode):
     logger.info(f"{barcode} | Iniciando treinamento XGBoost.")
+    # ---------------- ARQUIVOS DE MODELO -----------------
+    model_dir   = f"models/XGBoost/{barcode}"
+    model_path  = os.path.join(model_dir, f"xgb_{barcode}.json")
+    scaler_path = os.path.join(model_dir, "scaler.pkl")
+
+    booster_loaded = None
+    if os.path.isfile(model_path) and os.path.isfile(scaler_path):
+        try:
+            booster_loaded = xgb.Booster()
+            booster_loaded.load_model(model_path)
+            scaler = joblib.load(scaler_path)
+            logger.info(f"{barcode} | Modelo XGBoost carregado de disco. "
+                        f"Pulando re-treino global.")
+        except Exception as e:
+            logger.warning(f"{barcode} | Falha ao carregar modelo salvo: {e}")
+            booster_loaded = None
 
     df = df.dropna().sort_values("Date").reset_index(drop=True)
 
@@ -133,45 +150,53 @@ def train_xgboost(df, barcode):
 
     logger.info(f"{barcode} | Finalizadas as janelas rolling. Iniciando predição mensal para 2024.")
 
-    # Previsão mês a mês de 2024
-    forecast_2024 = []
-    scaler = StandardScaler()
-    X_train_full = scaler.fit_transform(df_treino[features])
-    y_train_full = df_treino["Quantity"].values
-    dtrain_full = xgb.DMatrix(X_train_full, label=y_train_full)
+    # -------------------------------------------------------------
+    # RE-TREINO GLOBAL (2019-2023)  ou  CARREGAMENTO JÁ EXISTENTE
+    # -------------------------------------------------------------
+    if booster_loaded is None:
+        scaler = StandardScaler()
+        X_train_full = scaler.fit_transform(df_treino[features])
+        y_train_full = df_treino["Quantity"].values
 
-    # split 80/20 do train_full para early stopping
-    split_idx_full = int(len(X_train_full) * 0.8)
-    X_tr_f, y_tr_f = X_train_full[:split_idx_full], y_train_full[:split_idx_full]
-    X_val_f, y_val_f = X_train_full[split_idx_full:], y_train_full[split_idx_full:]
+        # split 80/20 para early-stopping
+        split_idx_full = int(len(X_train_full) * 0.8)
+        X_tr_f, y_tr_f = X_train_full[:split_idx_full], y_train_full[:split_idx_full]
+        X_val_f, y_val_f = X_train_full[split_idx_full:], y_train_full[split_idx_full:]
 
-    dtrain = xgb.DMatrix(X_tr_f,  label=y_tr_f)
-    dval   = xgb.DMatrix(X_val_f,  label=y_val_f)
+        dtrain = xgb.DMatrix(X_tr_f, label=y_tr_f)
+        dval   = xgb.DMatrix(X_val_f, label=y_val_f)
+        evals  = [(dtrain, "train"), (dval, "valid")]
 
-    evals_full = [(dtrain, "train"), (dval, "valid")]
-    try:
-        booster = xgb.train(
-            params=params,
-            dtrain=dtrain,
-            num_boost_round=10000,
-            evals=evals_full,
-            early_stopping_rounds=200,
-            verbose_eval=False
-        )
-    except xgb.core.XGBoostError as e:
-        if _fallback_to_cpu(e, params, barcode, "re-treino global"):
-            logger.warning(f"{barcode} | GPU indisponível no re-treino global → voltando ao CPU")
+        try:
             booster = xgb.train(
                 params=params,
                 dtrain=dtrain,
-                evals=evals_full,
                 num_boost_round=10000,
+                evals=evals,
                 early_stopping_rounds=200,
-                verbose_eval=False
+                verbose_eval=False,
             )
-        else:
-            raise
+        except xgb.core.XGBoostError as e:
+            if _fallback_to_cpu(e, params, barcode, "re-treino global"):
+                logger.warning(f"{barcode} | GPU indisponível → usando CPU")
+                booster = xgb.train(
+                    params=params,
+                    dtrain=dtrain,
+                    evals=evals,
+                    num_boost_round=10000,
+                    early_stopping_rounds=200,
+                    verbose_eval=False,
+                )
+            else:
+                raise
+    else:
+        booster = booster_loaded   # veio do disco
+        # scaler já foi lido em scaler = joblib.load(...)
+        X_train_full = scaler.transform(df_treino[features])  # só p/ manter variáveis
 
+    forecast_2024 = []          # ← agora a variável existe
+
+    # -------------------------------------------------------------
     for month in range(1, 13):
         df_month = df_2024[df_2024["Date"].dt.month == month].copy()
         if df_month.empty:
@@ -247,6 +272,13 @@ def train_xgboost(df, barcode):
                 raise
 
         logger.info(f"{barcode} | Fine-tune incremental realizado com dados de {month:02d}/2024.")
+
+    # ---------------- SALVAMENTO -------------------------
+    os.makedirs(model_dir, exist_ok=True)
+    booster.save_model(model_path)
+    joblib.dump(scaler, scaler_path)
+    logger.info(f"{barcode} | Modelo XGBoost + scaler salvos em {model_dir}")
+
 
     logger.info(f"{barcode} | Treinamento XGBoost concluído.")
 

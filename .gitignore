@@ -180,3 +180,6 @@ data/metrics/
 data/plots/
 data/raw/T
 data/
+
+# Models
+models/

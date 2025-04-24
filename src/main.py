@@ -19,8 +19,8 @@ import multiprocessing as mp
 mp.set_start_method("spawn", force=True)                  # contexto CUDA limpo
 
 # --------- SEMÁFOROS / LIMITES -------------------------------------
-MAX_PARALLEL_PROCS  = 8     # quantos subprocessos vivos no total?
-MAX_XGB_CONCURRENT  = 4     # quantos XGB simultâneos na GPU?
+MAX_PARALLEL_PROCS  = 1     # quantos subprocessos vivos no total?
+MAX_XGB_CONCURRENT  = 1     # quantos XGB simultâneos na GPU?
 # ––– locks ----------------------------------------------------------
 proc_lock        = mp.Semaphore(MAX_PARALLEL_PROCS)   # limite global de processos
 xgb_gpu_lock     = mp.Semaphore(MAX_XGB_CONCURRENT)   # GPU “leve” (XGBoost)
@@ -49,7 +49,7 @@ def processar_produto(barcode: str, df_raw,
                       xgb_gpu_lock, nn_gpu_lock, proc_lock):
     """Cadeia completa (features → modelos → métricas) por produto."""
     # logger dedicado
-    logger = get_logger(f"PROD_{barcode}", log_file=f"logs/{barcode}.log")
+    # logger = get_logger(f"PROD_{barcode}", log_file=f"logs/{barcode}.log")
 
     try:
         logger.info(f"Processando produto {barcode}…")
