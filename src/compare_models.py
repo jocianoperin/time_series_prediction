@@ -1,13 +1,28 @@
 # ============================================================
 #  COMPARAÇÃO, CONSOLIDAÇÃO E PLOTAGEM DE RESULTADOS
+# ------------------------------------------------------------
+#  ‣ Consolida CSVs de métricas e predições de cada modelo
+#  ‣ Gera gráficos mensais REAL × MODELOS
+#  ‣ Mantém compatibilidade com o pipeline existente
 # ============================================================
+
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def _normalizar_preds(df, model_name):
+
+# ------------------------------------------------------------
+#  FUNÇÃO AUXILIAR – NORMALIZA NOME DA COLUNA DE PREVISÃO
+# ------------------------------------------------------------
+def _normalizar_preds(df: pd.DataFrame, model_name: str) -> pd.DataFrame:
     """
-    Renomeia a coluna‑de‑previsão para o nome do modelo.
+    Renomeia, se necessário, a coluna de previsão para `<model_name>`.
+
+    Aceita as variações:
+        • forecast
+        • prediction_<model_name>
+        • predicted
+        • yhat
     """
     possiveis = [
         "forecast",
@@ -18,72 +33,96 @@ def _normalizar_preds(df, model_name):
     for col in possiveis:
         if col in df.columns:
             return df.rename(columns={col: model_name})
-    raise ValueError(f"Coluna de predição não encontrada para {model_name}")
 
-def compare_and_save_results(barcode, results,
-                             base_pred_dir="data/predictions",
-                             base_plot_dir="data/plots"):
-    """
-    Consolida métricas + predições, salva em
-        data/predictions/comparativo/
-    e gera gráficos mensais em
-        data/plots/comparativo/<barcode>/.
-    """
-    metrics_list  = []
-    merged_preds  = None
-    real_col_name = None
+    raise ValueError(
+        f"Coluna de predição não encontrada no DF de {model_name} "
+        f"({', '.join(possiveis)})"
+    )
 
-    # ------------------- CONSOLIDAÇÃO -----------------------
+
+# ------------------------------------------------------------
+#  FUNÇÃO PRINCIPAL – COMPARAÇÃO / CONSOLIDAÇÃO / PLOTAGEM
+# ------------------------------------------------------------
+def compare_and_save_results(
+    barcode: str,
+    results: dict,
+    base_pred_dir: str = "data/predictions",
+    base_plot_dir: str = "data/plots",
+) -> None:
+    """
+    Consolida métricas e predições de diferentes modelos para um produto
+    específico (`barcode`) e produz:
+
+    • CSV …/predictions/comparativo/<barcode>_metrics.csv
+    • CSV …/predictions/comparativo/predicoes_2024_<barcode>.csv
+    • PNGs mensais …/plots/comparativo/<barcode>/comparativo_<barcode>_2024_MM.png
+    """
+    metrics_list: list[dict] = []
+    merged_preds: pd.DataFrame | None = None
+    real_col_name: str | None = None
+
+    # ------------------- ITERA MODELOS ---------------------
     for model_name, data in results.items():
-        if not data:
+        # `data` deve conter "predictions" (obrigatório) e "metrics" (opcional)
+        if not data or "predictions" not in data:
             continue
 
-        # ---- métricas --------------------------------------
-        m = data["metrics"].copy()
-        m["model"] = model_name
-        metrics_list.append(m)
+        # ------- PREVISÕES ---------------------------------
+        df = data["predictions"].copy()
+        if df.empty:
+            continue
 
-        # ---- predições -------------------------------------
-        # ---------- define a série REAL (primeiro DF que a contiver) ----------
+        # define coluna REAL na 1ª iteração que a contiver
         if merged_preds is None:
             if "Quantity" in df.columns:
                 real_col_name = "Quantity"
             elif "real" in df.columns:
                 real_col_name = "real"
             else:
-                # este modelo não tem coluna real → pula e tenta no próximo
+                # sem coluna real → pula este modelo e tenta o próximo
                 continue
-
             merged_preds = df[["Date", real_col_name]].copy()
 
+        # adiciona coluna do modelo
+        df_norm = _normalizar_preds(df, model_name)[["Date", model_name]]
+        merged_preds = pd.merge(
+            merged_preds, df_norm, on="Date", how="outer"
+        )
 
-        df = _normalizar_preds(df, model_name)[["Date", model_name]]
-        merged_preds = pd.merge(merged_preds, df, on="Date", how="outer")
+        # ------- MÉTRICAS ----------------------------------
+        if "metrics" in data and data["metrics"]:
+            m = data["metrics"].copy()
+            m["model"] = model_name
+            metrics_list.append(m)
 
-    # Renomeia coluna real → real
+    # nada para consolidar → aborta silenciosamente
+    if merged_preds is None:
+        return
+
+    # renomeia coluna real → real
     if real_col_name and real_col_name != "real":
         merged_preds = merged_preds.rename(columns={real_col_name: "real"})
 
-    # ------------------- SAÍDAS -----------------------------
+    # ------------------- SAÍDAS ---------------------------
     out_cmp_dir = os.path.join(base_pred_dir, "comparativo")
     os.makedirs(out_cmp_dir, exist_ok=True)
 
-    # métricas
-    metrics_df = pd.DataFrame(metrics_list)
-    metrics_df.to_csv(
-        os.path.join(out_cmp_dir, f"{barcode}_metrics.csv"), index=False
-    )
+    # — métricas agregadas —
+    if metrics_list:
+        metrics_df = pd.DataFrame(metrics_list)
+        metrics_df.to_csv(
+            os.path.join(out_cmp_dir, f"{barcode}_metrics.csv"), index=False
+        )
+    else:
+        metrics_df = pd.DataFrame()
 
-    # predições consolidadas
+    # — predições consolidadas —
     merged_preds.to_csv(
-        os.path.join(out_cmp_dir, f"predicoes_2024_{barcode}.csv"), index=False
+        os.path.join(out_cmp_dir, f"predicoes_2024_{barcode}.csv"),
+        index=False,
     )
 
-    # melhor modelo
-    best_model = metrics_df.sort_values("mae").iloc[0]["model"]
-    print(f"Para o produto {barcode}, o melhor modelo foi: {best_model}")
-
-    # ------------------- GRÁFICOS ---------------------------
+    # ------------------- GRÁFICOS -------------------------
     plot_dir = os.path.join(base_plot_dir, "comparativo", barcode)
     os.makedirs(plot_dir, exist_ok=True)
 
@@ -94,15 +133,17 @@ def compare_and_save_results(barcode, results,
         merged_preds_2024["Date"].dt.month
     ):
         plt.figure(figsize=(10, 5))
-        # linha real
+
+        # — série real —
         plt.plot(
             df_month["Date"],
             df_month["real"],
             label="REAL",
             marker="o",
         )
-        # linhas dos modelos rodados
-        for model in metrics_df["model"]:
+
+        # — séries dos modelos —
+        for model in metrics_df["model"].tolist() if not metrics_df.empty else []:
             if model in df_month.columns:
                 plt.plot(
                     df_month["Date"],
