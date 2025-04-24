@@ -14,6 +14,7 @@ na sequência, preservando TODOS os comentários descritivos.
 # ================================================================
 import os
 import random
+import matplotlib.pyplot as plt
 import gc
 import numpy as np
 import pandas as pd
@@ -321,45 +322,64 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
 
 
     # ---------- 4) WALK‑FORWARD 2024 + FINE‑TUNE MENSAL ----------
-    df_full = pd.concat([df_treino, df_2024]).reset_index(drop=True)
+    df_full    = pd.concat([df_treino, df_2024]).reset_index(drop=True)
     daily_rows = []
 
     for month in range(1, 13):
-        df_month = df_2024[df_2024["Date"].dt.month == month]
-        if df_month.empty:
+        # índices desse mês já dentro de df_full (garante contexto anterior)
+        idxs_month = df_full.index[
+            (df_full["Date"].dt.year == 2024) & (df_full["Date"].dt.month == month)
+        ]
+
+        if len(idxs_month) == 0:
             logger.warning(f"{barcode} | NN – {month:02d}/2024 ignorado (sem dados)")
             continue
 
-        # ---- predição diária -----------------------------------
-        for idx in df_month.index:
+        # ------------- PREVISÃO DIÁRIA ----------------------------
+        for idx in idxs_month:
             seq_start = idx - TIME_STEPS
             if seq_start < 0:
+                # histórico ainda insuficiente; pula o primeiro(s) dia(s) de janeiro
                 continue
-            seq = df_full.loc[seq_start: idx - 1, features].values.reshape(
-                (1, TIME_STEPS, len(features))
-            )
-            forecast = float(model.predict(seq, verbose=0).flatten()[0])
-            real     = float(df_full.loc[idx, "Quantity"])
 
-            met = calculate_metrics(np.array([real]), np.array([forecast]))
+            X_seq = df_full.loc[seq_start:idx - 1, features] \
+                            .values.reshape(1, TIME_STEPS, len(features))
+            y_real = float(df_full.loc[idx, "Quantity"])
+            y_pred = float(model.predict(X_seq, verbose=0).flatten()[0])
+
+            met = calculate_metrics(np.array([y_real]), np.array([y_pred]))
+
             daily_rows.append({
-                "date": df_full.loc[idx, "Date"],
-                "barcode": barcode,
-                "forecast": forecast,
-                "real": real,
-                "mae": met["mae"],
-                "rmse": met["rmse"],
-                "mape": met["mape"],
-                "smape": met["smape"],
+                "date":     df_full.loc[idx, "Date"],
+                "barcode":  barcode,
+                "forecast": y_pred,
+                "real":     y_real,
+                "mae":      met["mae"],
+                "rmse":     met["rmse"],
+                "mape":     met["mape"],
+                "smape":    met["smape"],
             })
 
-        # ---- fine‑tune com dados reais do mês ------------------
+        # ------------- FINE-TUNE DO MÊS ---------------------------
+        # cria as sequências usando o CONTEXTO COMPLETO (TIME_STEPS anteriores
+        # + todo o mês), evitando descartar meses curtos (fev, abr, jun, set, nov)
+        start_ft = max(int(idxs_month[0]) - TIME_STEPS, 0)
+        end_ft   = int(idxs_month[-1])
+
         X_ft, y_ft = create_sequences(
-            df_month[features].values, df_month["Quantity"].values
+            df_full.loc[start_ft:end_ft, features].values,
+            df_full.loc[start_ft:end_ft, "Quantity"].values,
+            time_steps=TIME_STEPS,
         )
+
         if len(X_ft):
-            model.fit(X_ft, y_ft, epochs=fine_epochs, batch_size=fine_batch, verbose=0)
-            logger.info(f"{barcode} | NN – fine‑tune aplicado em {month:02d}/2024")
+            model.fit(X_ft, y_ft,
+                    epochs=fine_epochs,
+                    batch_size=fine_batch,
+                    verbose=0)
+            logger.info(f"{barcode} | NN – fine-tune aplicado em {month:02d}/2024")
+        else:
+            logger.warning(f"{barcode} | NN – fine-tune {month:02d}/2024 ignorado (seqs insuficientes)")
 
     if not daily_rows:
         logger.warning(f"{barcode} | NN – nenhuma predição gerada para 2024")
@@ -395,7 +415,7 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
     free_gpu_memory()
 
     return df_roll, nn_metrics_2024, (
-        df_daily.rename(columns={"date": "Date"})[["Date", "forecast"]]
+        df_daily.rename(columns={"date": "Date"})[["Date", "real", "forecast"]]
     )
 
 
@@ -434,7 +454,8 @@ def plot_nn_monthly(df_plot: pd.DataFrame, barcode: str, month: int) -> None:
         plt.text(x, y, f"{y:.0f}", ha="center", va="bottom", fontsize=8)
     for x, y in zip(df_plot["date"], df_plot["forecast"]):
         plt.text(x, y, f"{y:.0f}", ha="center", va="bottom",
-                 fontsize=8, color="blue")
+                fontsize=8, color="orange")
+
 
     # --- Estética -------------------------------------------------
     plt.title(f"REAL vs NN (LSTM) – {barcode} – {month:02d}/2024")

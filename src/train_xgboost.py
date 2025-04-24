@@ -200,7 +200,9 @@ def train_xgboost(df, barcode):
         df_result["mape"]  = df_result["ape"] * 100
         df_result["smape"] = (df_result["mae"] / ( (df_result["Quantity"].abs() + df_result["forecast"].abs())/2 ).replace(0, np.nan)) * 100
 
-        forecast_2024.append(df_result[["Date", "forecast"]])
+        forecast_2024.append(
+            df_result.rename(columns={"Quantity": "real"})[["Date", "real", "forecast"]]
+        )
         
         output_csv = df_result[["Date", "Quantity", "forecast", "mae", "rmse", "mape", "smape"]].copy()
 

@@ -20,7 +20,7 @@ mp.set_start_method("spawn", force=True)                  # contexto CUDA limpo
 
 # --------- SEMÁFOROS / LIMITES -------------------------------------
 MAX_PARALLEL_PROCS  = 8     # quantos subprocessos vivos no total?
-MAX_XGB_CONCURRENT  = 8     # quantos XGB simultâneos na GPU?
+MAX_XGB_CONCURRENT  = 4     # quantos XGB simultâneos na GPU?
 # ––– locks ----------------------------------------------------------
 proc_lock        = mp.Semaphore(MAX_PARALLEL_PROCS)   # limite global de processos
 xgb_gpu_lock     = mp.Semaphore(MAX_XGB_CONCURRENT)   # GPU “leve” (XGBoost)

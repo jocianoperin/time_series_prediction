@@ -44,13 +44,18 @@ def compare_and_save_results(barcode, results,
         metrics_list.append(m)
 
         # ---- predições -------------------------------------
-        df = data["predictions"].copy()
+        # ---------- define a série REAL (primeiro DF que a contiver) ----------
         if merged_preds is None:
             if "Quantity" in df.columns:
                 real_col_name = "Quantity"
             elif "real" in df.columns:
                 real_col_name = "real"
+            else:
+                # este modelo não tem coluna real → pula e tenta no próximo
+                continue
+
             merged_preds = df[["Date", real_col_name]].copy()
+
 
         df = _normalizar_preds(df, model_name)[["Date", model_name]]
         merged_preds = pd.merge(merged_preds, df, on="Date", how="outer")
