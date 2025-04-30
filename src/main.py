@@ -1,142 +1,106 @@
 # ============================================================
-#  MAIN – PIPELINE DE PREVISÃO DIÁRIA 2024
+#  MAIN – PIPELINE DE PREVISÃO DIÁRIA 2024 (PARALELO CONTROLADO)
 #  ------------------------------------------------------------
-#  ➤ Objectivo desta revisão
-#    • rodar ATÉ 4 XGBoost **concomitantes** (GPU leve)
-#    • em seguida, para cada produto, rodar a NN
-#      ‑‑> **exclusividade GPU** para a NN (alto consumo)
-#    • manter todo o código anterior; apenas *comentar* o que
-#      deixa de ser usado e adicionar os novos locks/fluxo.
+#  Objetivo:
+#    • Rodar XGBoost de forma concorrente (GPU leve)
+#    • Rodar Rede Neural (LSTM) com exclusividade da GPU
+#    • Consolidar previsões e métricas por produto
 # ============================================================
 
-# ---------- Ajustes globais de GPU ---------------------------------
+# ----- AJUSTES DE GPU (OTIMIZAÇÃO DE USO DE VRAM) ----------
 import os
 os.environ["OMP_NUM_THREADS"] = "2"
 os.environ["OPENBLAS_NUM_THREADS"] = "2"
-os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"      # devolve VRAM assim que possível
-# -------------------------------------------------------------------
+os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
-import traceback
+# ----- MULTIPROCESSAMENTO COM CONTEXTO LIMPO (CUDA) --------
 import multiprocessing as mp
-mp.set_start_method("spawn", force=True)                  # contexto CUDA limpo
+import traceback
+mp.set_start_method("spawn", force=True)
 
-# --------- SEMÁFOROS / LIMITES -------------------------------------
-MAX_PARALLEL_PROCS  = 4     # quantos subprocessos vivos no total?
-MAX_XGB_CONCURRENT  = 2     # quantos XGB simultâneos na GPU?
-# ––– locks ----------------------------------------------------------
-proc_lock        = mp.Semaphore(MAX_PARALLEL_PROCS)   # limite global de processos
-xgb_gpu_lock     = mp.Semaphore(MAX_XGB_CONCURRENT)   # GPU “leve” (XGBoost)
-nn_gpu_lock      = mp.Semaphore(1)                    # GPU “pesada” (NN) – exclusividade
-# -------------------------------------------------------------------
+# ----- LIMITES DE CONCORRÊNCIA -----------------------------
+MAX_PARALLEL_PROCS = 4     # Máximo de processos simultâneos
+MAX_XGB_CONCURRENT = 2     # XGBoosts simultâneos na GPU
+proc_lock    = mp.Semaphore(MAX_PARALLEL_PROCS)   # controle global
+xgb_gpu_lock = mp.Semaphore(MAX_XGB_CONCURRENT)   # GPU leve
+nn_gpu_lock  = mp.Semaphore(1)                    # GPU exclusiva para NN
 
+# ----- IMPORTS DO PIPELINE ----------------------------------
 from utils.logging_config import get_logger
-
-from data_preparation    import carregar_dados
-from feature_engineering import create_features
-
-from train_xgboost import train_xgboost
-from train_nn      import train_neural_network
-# from train_arima   import train_arima_daily_2024
-# from train_prophet import train_prophet
-from compare_models import compare_and_save_results
-from utils.metrics  import calculate_metrics
-from utils.gpu_utils import free_gpu_memory
+from data_preparation     import carregar_dados
+from feature_engineering  import create_features
+from train_xgboost        import train_xgboost
+from train_nn             import train_neural_network
+from compare_models       import compare_and_save_results
+from utils.metrics        import calculate_metrics
+from utils.gpu_utils      import free_gpu_memory
 
 logger = get_logger(__name__)
 
 # ============================================================
-#  FUNÇÃO ISOLADA PARA PROCESSAR UM ÚNICO PRODUTO
+#  PROCESSA UM ÚNICO PRODUTO – ETAPAS COMPLETAS
 # ============================================================
-def processar_produto(barcode: str, df_raw,
-                      xgb_gpu_lock, nn_gpu_lock, proc_lock):
-    """Cadeia completa (features → modelos → métricas) por produto."""
+def processar_produto(barcode: str, df_raw, xgb_gpu_lock, nn_gpu_lock, proc_lock):
+    """
+    Executa a cadeia completa de predição para um produto:
+    feature engineering → XGBoost → LSTM → consolidação de métricas.
+    """
     
-    slot_released = False          # ← controla liberação antecipada
-    # logger dedicado
-    # logger = get_logger(f"PROD_{barcode}", log_file=f"logs/{barcode}.log")
-
+    slot_released = False
+    
     try:
-        logger.info(f"Processando produto {barcode}…")
+        logger.info(f"[{barcode}] Iniciando processamento…")
 
-        # 1) Feature engineering
+        # ----- FEATURE ENGINEERING --------------------------
         df = create_features(df_raw)
         results = {}
 
-        # 2) XGBoost – GPU “leve” (pode haver até MAX_XGB_CONCURRENT)
+        # ----- XGBOOST (GPU leve, concorrente) --------------
         with xgb_gpu_lock:
             logger.info("Iniciando XGBoost…")
             df_xgb_all, xgb_metrics, df_xgb_2024 = train_xgboost(df, barcode)
             results["xgboost"] = {"metrics": xgb_metrics,
                                   "predictions": df_xgb_2024}
-            logger.info("XGBoost concluído.")
-
-            free_gpu_memory()        #  <──  força descarte de buffers do XGB
+            
+            logger.info(f"[{barcode}] XGBoost concluído")
+            free_gpu_memory()
+            
             slot_released = True
-            logger.debug("Slot global liberado após XGBoost; aguardando NN…")
-            proc_lock.release()                 # <- libera já aqui
-            logger.debug("Slot global liberado após XGBoost; aguardando NN…")
+            proc_lock.release()
+            logger.debug(f"[{barcode}] Slot global liberado após XGBoost")
 
-
-            slot_released = True
-            logger.debug("Slot global liberado após XGBoost; aguardando NN…")
-
-        # 3) LSTM / Attention – GPU “pesada” (exclusiva)
+        # ----- LSTM / NN (GPU pesada, uso exclusivo) ---------
         with nn_gpu_lock:
             logger.info("Iniciando LSTM (NN)…")
             df_nn_all, nn_metrics, df_nn_2024 = train_neural_network(df, barcode)
             results["nn"] = {"metrics": nn_metrics,
                              "predictions": df_nn_2024}
-            logger.info("LSTM concluído.")
-
-        # 4) ARIMA ----------------------------------------------------
-        # (desabilitado – mantenha comentado para uso futuro)
-        # try:
-        #     from train_arima import train_arima_daily_2024
-        #     logger.info("Iniciando ARIMA…")
-        #     df_arima = train_arima_daily_2024(df, barcode)
-        #     arima_metrics = calculate_metrics(df_arima["Quantity"],
-        #                                       df_arima["prediction_arima"])
-        #     results["arima"] = {"metrics": arima_metrics,
-        #                         "predictions": df_arima}
-        #     logger.info("ARIMA concluído.")
-        # except Exception as e:
-        #     logger.warning(f"ARIMA não executado para {barcode}: {e}")
-
-        # 5) Prophet --------------------------------------------------
-        # try:
-        #     from train_prophet import train_prophet
-        #     logger.info("Iniciando Prophet…")
-        #     df_prophet_all, prophet_metrics, df_prophet_2024 = \
-        #         train_prophet(df, barcode)
-        #     results["prophet"] = {"metrics": prophet_metrics,
-        #                           "predictions": df_prophet_2024}
-        #     logger.info("Prophet concluído.")
-        # except Exception as e:
-        #     logger.warning(f"Prophet não executado para {barcode}: {e}")
-
-        # 6) Comparativo + salvamento
+            
+            logger.info(f"[{barcode}] LSTM concluído")
+        
+        # ----- CONSOLIDAÇÃO FINAL ----------------------------
         compare_and_save_results(barcode, results)
 
     except Exception as exc:
-        logger.error(f"Erro no produto {barcode}: {exc}")
+        logger.error(f"[{barcode}] Erro no pipeline: {exc}")
         logger.error(traceback.format_exc())
     finally:
-        free_gpu_memory()        # liberação total de VRAM
-        if not slot_released:    # libera caso XGBoost tenha falhado
+        free_gpu_memory() 
+        if not slot_released:
             proc_lock.release()
 
 # ============================================================
-#  EXECUÇÃO – **PARALELO CONTROLADO**  (ativa por padrão)
-#  (a versão 100 % sequencial foi mantida, porém comentada)
+#  EXECUÇÃO PRINCIPAL – PARALELO CONTROLADO
 # ============================================================
 def main():
-    logger.info("Iniciando pipeline diário 2024…")
+    logger.info("🚀 Iniciando pipeline de predição diária 2024")
 
     dados = carregar_dados("data/raw")
     logger.info(f"Dados carregados: {len(dados)} produtos encontrados.")
 
-    # --------- VERSÃO PARALELA COM CONTROLES -----------------
+    # ----- EXECUÇÃO EM MULTIPROCESSAMENTO -------------------
     processes = []
+
     for barcode, df in dados.items():
         proc_lock.acquire()   # respeita MAX_PARALLEL_PROCS
         p = mp.Process(target=processar_produto,
@@ -148,18 +112,12 @@ def main():
 
     for p in processes:
         p.join()
-    # ---------------------------------------------------------
-
-    # --------- VERSÃO 100 % SEQUENCIAL -----------------------
-    # (desative a versão paralela acima e descomente este bloco
-    #  se quiser voltar para execução linear)
-    #
+    
+    # ----- VERSÃO SEQUENCIAL (desativada) -------------------
     # for barcode, df in dados.items():
-    #     processar_produto(barcode, df,
-    #                       xgb_gpu_lock, nn_gpu_lock, proc_lock)
-    # ---------------------------------------------------------
+    #     processar_produto(barcode, df, xgb_gpu_lock, nn_gpu_lock, proc_lock)
 
-    logger.info("Finalizado processo diário de todos os modelos.")
+    logger.info("✅ Pipeline concluído para todos os produtos")
 
 if __name__ == "__main__":
     main()

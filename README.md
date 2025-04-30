@@ -1,6 +1,10 @@
 # 📈 Previsão de Séries Temporais (time_series_prediction)
 
-Projeto desenvolvido para realizar previsões robustas utilizando modelos de Machine Learning (ML), com foco especial em Redes Neurais (LSTM) e XGBoost.
+Projeto desenvolvido por **Jociano Perin** como parte do seu mestrado profissional em Inteligência Computacional na **UTFPR (Universidade Tecnológica Federal do Paraná)**. 
+
+Este repositório contém todo o pipeline ajustado para previsão de séries temporais com base no conjunto de dados reais utilizados no projeto, considerando o período de **01/01/2019 a 31/12/2023**, com foco em produtos identificados por código de barras.
+
+O projeto foi desenvolvido para realizar previsões robustas utilizando modelos de Machine Learning (ML), com foco especial em Redes Neurais (LSTM) e XGBoost.
 
 ## 🔍 O que este projeto faz?
 
@@ -39,6 +43,39 @@ time_series_prediction/
 - `src/train_xgboost.py`: Implementação do modelo XGBoost.
 - `src/utils.py`: Funções auxiliares e métricas de avaliação.
 - `src/main.py`: Script principal para execução do pipeline.
+
+## 🗂️ Estrutura dos Dados (.csv)
+
+Este projeto espera que os arquivos de dados estejam no diretório:
+
+```
+data/raw/
+```
+
+Cada arquivo deve estar nomeado com o código de barras (barcode) do produto, no formato:
+
+```
+<barcode>.csv
+```
+
+### 📄 Estrutura esperada do arquivo `.csv`:
+
+```csv
+Date,Barcode,OnPromotion,Quantity,ReturnedQuantity,Discount,Increase,TotalValue,UnitValue,CostValue,Holiday
+2019-01-02,7891021006125,0,17.0,0.0,0.946,0.0,169.15,9.95,8.66,0
+2019-01-03,7891021006125,0,30.0,0.0,0.884,0.0,298.5,9.95,8.66,0
+...
+```
+
+### 🕓 Período de dados padrão
+
+O projeto foi ajustado para operar com dados entre:
+
+```
+01/01/2019 a 31/12/2023
+```
+
+Esse intervalo foi definido com base na disponibilidade e qualidade dos dados reais utilizados na pesquisa.
 
 ---
 
@@ -128,6 +165,38 @@ model = Sequential([
         # Camada final densa permanece
         #{"type": "Dense","units": 32,  "activation": "relu", "dropout": 0.1},
 ---
+
+### ⚙️ Hiperparâmetros do XGBoost
+
+O modelo XGBoost utiliza os seguintes hiperparâmetros, otimizados para séries temporais de vendas com padrão estável e ruído moderado:
+
+```python
+params = {
+    "objective": "reg:squarederror",   # Regressão com erro quadrático
+    "eval_metric": "mae",              # Métrica mais robusta contra outliers
+    "learning_rate": 0.01,             # Aprendizado mais lento e estável
+    "max_depth": 6,                    # Profundidade equilibrada para generalização
+    "subsample": 0.8,                  # Amostragem parcial evita overfitting
+    "colsample_bytree": 0.8,           # Seleção parcial de features por árvore
+    "min_child_weight": 3,             # Folhas mínimas com 3 instâncias (evita splits fracos)
+    "gamma": 0.1,                      # Exige ganho mínimo para split (regularização)
+    "lambda": 1.0,                     # Regularização L2 nos pesos
+    "tree_method": "hist",             # Treinamento otimizado via histogramas
+    "device": "cuda",                  # Utiliza GPU com suporte CUDA
+    "verbosity": 0,                    # Executa de forma silenciosa
+    "seed": 42                         # Reprodutibilidade garantida
+}
+```
+
+#### 🔁 Recomendações de ajuste por tipo de série:
+
+| Tipo de série                      | Sugestões de ajuste                                              |
+|-----------------------------------|------------------------------------------------------------------|
+| **Alta volatilidade**             | Aumentar `min_child_weight` (ex: 5), reduzir `max_depth` (ex: 3) |
+| **Séries com tendências sazonais**| Aumentar `max_depth` (ex: 8), manter `subsample` e `colsample_bytree` altos |
+| **Séries muito curtas**           | Reduzir `min_child_weight`, usar `max_depth` menor (ex: 2–3)     |
+| **Séries com muitos outliers**    | Trocar `eval_metric` para `"quantile"` (requer ajustes extras)  |
+
 
 ## 📈 Avaliando os Resultados
 
