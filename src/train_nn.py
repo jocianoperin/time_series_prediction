@@ -28,8 +28,8 @@ tf.random.set_seed(42)
 
 
 from sklearn.preprocessing import StandardScaler
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.layers import (
+from tensorflow.keras.callbacks import EarlyStopping # type: ignore
+from tensorflow.keras.layers import ( # type: ignore
     LSTM,
     GRU,
     Dense,
@@ -41,9 +41,9 @@ from tensorflow.keras.layers import (
     LayerNormalization,
     GlobalAveragePooling1D,
 )
-from tensorflow.keras.models import Model
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.models import load_model as keras_load_model
+from tensorflow.keras.models import Model # type: ignore
+from tensorflow.keras.optimizers import Adam # type: ignore
+from tensorflow.keras.models import load_model as keras_load_model # type: ignore
 from utils.logging_config import get_logger
 from utils.metrics import calculate_metrics
 from data_preparation import generate_rolling_windows
@@ -56,7 +56,7 @@ from utils.gpu_utils import free_gpu_memory  # liberação total de VRAM
 #    imediatamente após o tensor ser desalocado.
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 # 2) Permite que o TensorFlow cresça a memória conforme a demanda
-os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
+#os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 # 3) Desativa o XLA JIT – costuma reter buffers extras na VRAM
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=0"
 
@@ -102,7 +102,7 @@ def create_sequences(X: np.ndarray, y: np.ndarray, time_steps: int = TIME_STEPS)
     for i in range(len(X) - time_steps):
         Xs.append(X[i : i + time_steps])
         ys.append(y[i + time_steps])
-    return np.array(Xs), np.array(ys)
+    return np.array(Xs, dtype=np.float32), np.array(ys, dtype=np.float32)
 
 # ========================================================= #
 # --------------  CONSTRUÇÃO DINÂMICA DO MODELO ----------- #
@@ -110,7 +110,7 @@ def create_sequences(X: np.ndarray, y: np.ndarray, time_steps: int = TIME_STEPS)
 def build_lstm_model(
     input_shape: tuple,
     layers_config: list,
-    learning_rate: float = 1e-3,
+    learning_rate: float = 5e-4,
 ):
     """Constrói, de forma *dinâmica*, uma pilha de camadas composta por
     LSTM, GRU, camadas densas e/ou blocos de Atenção Multi‑Head.
@@ -132,6 +132,10 @@ def build_lstm_model(
     • Caso o tensor de saída ainda seja 3‑D após o loop principal, ele é
       reduzido via **GlobalAveragePooling1D** antes da densa final.
     """
+    # sanity check
+    for layer in layers_config:
+        if not isinstance(layer, dict):
+            raise TypeError(f"Cada layer deve ser um dict, mas recebeu {type(layer)}")
 
     # ---------- Entrada do modelo ---------------------------------
     inputs = Input(shape=input_shape)
@@ -192,8 +196,9 @@ def build_lstm_model(
     model = Model(inputs, outputs)
     model.compile(
         optimizer=Adam(learning_rate=learning_rate, clipnorm=1.0),
-        loss="mae",
+        loss="huber",
     )
+
     return model
 
 # ================================================================
@@ -216,7 +221,13 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
     df = df.dropna().sort_values("Date").reset_index(drop=True)
 
     df_treino = df[df["Date"] < "2024-01-01"].copy()
-        # ---------------- ARQUIVOS DE MODELO -----------------
+    df_2024   = df[df["Date"].dt.year == 2024].copy()
+
+    # --- escala linear (mantém zeros e picos sem atenuação) ---
+    df_treino["Quantity_tr"] = df_treino["Quantity"].astype(np.float32)
+    df_2024["Quantity_tr"]   = df_2024["Quantity"].astype(np.float32)
+
+    # ---------------- ARQUIVOS DE MODELO -----------------
     model_dir   = f"models/NN/{barcode}"
     model_path  = os.path.join(model_dir, f"nn_{barcode}.h5")
     scaler_path = os.path.join(model_dir, "scaler.pkl")
@@ -227,51 +238,82 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
         try:
             model_loaded  = keras_load_model(model_path, compile=False)
             scaler_loaded = joblib.load(scaler_path)
-            logger.info(f"{barcode} | Rede NN carregada de disco. "
-                        f"Pulando re-treino global.")
+
+            # -------------------------------------------------------------
+            # O MODELO FOI CARREGADO SEM COMPILE ⇒ (compile=False):
+            # recompilamos aqui para permitir .fit() e .predict()
+            # -------------------------------------------------------------
+            try:
+                model_loaded.compile(
+                    optimizer=Adam(learning_rate=1e-4, clipnorm=1.0),
+                    loss="huber",
+                )
+            except Exception as e:
+                logger.warning(f"{barcode} | Falha ao compilar rede carregada: {e}")
+                model_loaded = None      # força reconstrução se der erro
+
+
+            # ----------- checa compatibilidade ------------------
+            num_feat_model = int(model_loaded.input_shape[-1])
+            features = [c for c in df.columns if c not in {"Date", "Quantity"}]
+
+            if num_feat_model != len(features):
+                logger.warning(
+                    f"{barcode} | Nº de features mudou "
+                    f"({num_feat_model} ➜ {len(features)}) – descartando modelo salvo."
+                )
+                model_loaded  = None
+                scaler_loaded = None
+                # (opcional) remove arquivos obsoletos
+                os.remove(model_path)
+                os.remove(scaler_path)
+            else:
+                logger.info(f"{barcode} | Rede NN carregada de disco.")
         except Exception as e:
             logger.warning(f"{barcode} | Falha ao carregar rede salva: {e}")
             model_loaded  = None
             scaler_loaded = None
 
-    df_2024   = df[df["Date"].dt.year == 2024].copy()
-
     features = [c for c in df.columns if c not in {"Date", "Quantity"}]
 
     if scaler_loaded is None:
         scaler = StandardScaler()
-        df_treino[features] = scaler.fit_transform(df_treino[features])
+        df_treino[features] = scaler.fit_transform(df_treino[features]).astype(np.float32)
     else:
         scaler = scaler_loaded
-        df_treino[features] = scaler.transform(df_treino[features])
+        df_treino[features] = scaler.transform(df_treino[features]).astype(np.float32)
 
     df_2024[features] = scaler.transform(df_2024[features])
 
 
     # ---------- 2) AVALIAÇÃO ROLLING 365×31 ----------------------
-    windows = generate_rolling_windows(df_treino, train_days=365, test_days=31)
+    windows = generate_rolling_windows(df_treino, train_days=365, test_days=TIME_STEPS + 1)
 
     layers_cfg = [
+        #INTERMEDIÁRIA
+        {"type":"LSTM", "units":128, "activation":"relu", "dropout": 0.1, "return_sequences":True, "bidirectional": True},
+        {"type":"LSTM", "units":64,  "activation":"relu", "dropout": 0.1, "return_sequences":False},
+        {"type":"Dense","units":32,  "activation":"relu", "dropout": 0.1},
         # Camada 1 removida (a de 512 unidades)
         #{"type": "LSTM", "units": 512, "activation": "relu", "dropout": 0.4, "return_sequences": True, "bidirectional": True},
         # Nova 1: LSTM com 256 unidades, bidirecional, permanece a mesma
-        {"type": "LSTM", "units": 256, "activation": "relu", "dropout": 0.3, "return_sequences": True, "bidirectional": True},
+        #{"type": "LSTM", "units": 256, "activation": "relu", "dropout": 0.1, "return_sequences": True, "bidirectional": True},
         # A camada GRU permanece
-        {"type": "GRU",  "units": 128, "activation": "relu", "dropout": 0.25, "return_sequences": True},
+        #{"type": "GRU",  "units": 128, "activation": "relu", "dropout": 0.1, "return_sequences": True},
         # Camada de atenção permanece
-        {"type": "ATTN", "heads": 4,   "key_dim": 32, "dropout": 0.1},
+        #{"type": "ATTN", "heads": 4,   "key_dim": 32, "dropout": 0.1},
         # Camada 5 removida (a de 64 unidades)
         #{"type": "LSTM", "units": 64,  "activation": "relu", "dropout": 0.2, "return_sequences": False},
         # Camada final densa permanece
-        {"type": "Dense","units": 32,  "activation": "relu", "dropout": 0.1},
+        #{"type": "Dense","units": 32,  "activation": "relu", "dropout": 0.1},
     ]
 
     lr          = 1e-4
-    batch_size  = 8
+    batch_size  = 16
     epochs      = 800
-    patience    = 80
+    patience    = 50
     fine_epochs = 10    # fine‑tune mensal
-    fine_batch  = 8
+    fine_batch  = 20
 
     rolling_frames = []
     for idx, win in enumerate(windows):
@@ -287,26 +329,33 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
             logger.warning(f"{barcode} | NN – janela {idx+1} ignorada (dados insuficientes)")
             continue
 
-        X_train, y_train = create_sequences(train[features].values, train["Quantity"].values)
-        X_test,  y_test  = create_sequences(test[features].values,  test["Quantity"].values)
+        X_train, y_train = create_sequences(train[features].values, train["Quantity_tr"].values)
+        X_test,  y_test  = create_sequences(test[features].values,  test["Quantity_tr"].values)
+
         if len(X_train) == 0 or len(X_test) == 0:
             logger.warning(f"{barcode} | NN – janela {idx+1} ignorada (seqs vazias)")
             continue
 
         model_tmp = build_lstm_model((X_train.shape[1], X_train.shape[2]), layers_cfg, lr)
         es = EarlyStopping(monitor="val_loss", patience=patience, restore_best_weights=True)
+        lr_sched = tf.keras.callbacks.ReduceLROnPlateau(
+            monitor="val_loss", factor=0.5, patience=30, verbose=0
+        )
+
         model_tmp.fit(
             X_train, y_train,
             validation_split=0.2,
             shuffle=False,
             epochs=epochs,
             batch_size=batch_size,
-            callbacks=[es],
+            callbacks=[es, lr_sched],
             verbose=0,
         )
 
         y_pred = model_tmp.predict(X_test, verbose=0).flatten()
-        mets   = calculate_metrics(y_test, y_pred)
+        # use raw → sem inversão
+        mets = calculate_metrics(y_test, y_pred)
+
         logger.info(
             f"{barcode} | NN – janela {idx+1}: MAE={mets['mae']:.2f}  "
             f"MAPE={mets['mape']:.2f}%"
@@ -327,7 +376,7 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
         return pd.DataFrame(), {}, pd.DataFrame()
 
     X_hist, y_hist = create_sequences(
-        df_treino[features].values, df_treino["Quantity"].values
+        df_treino[features].values, df_treino["Quantity_tr"].values
     )
 
     if model_loaded is None:
@@ -337,14 +386,18 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
         model = model_loaded
 
     # early stopping com validação 20% e sem shuffle
-    es_global = EarlyStopping(monitor="val_loss", patience=patience, restore_best_weights=True)
+    es = EarlyStopping(monitor="val_loss", patience=patience, restore_best_weights=True)
+    lr_sched = tf.keras.callbacks.ReduceLROnPlateau(
+        monitor="val_loss", factor=0.5, patience=30, verbose=0
+    )
+
     model.fit(
         X_hist, y_hist,
         validation_split=0.2,
         shuffle=False,
         epochs=epochs,
         batch_size=batch_size,
-        callbacks=[es_global],
+        callbacks=[es, lr_sched],
         verbose=0,
     )
 
@@ -367,10 +420,14 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
 
         # ------------- PREVISÃO DIÁRIA ----------------------------
         for idx in idxs_month:
-            seq_start = idx - TIME_STEPS
+            """seq_start = idx - TIME_STEPS
             if seq_start < 0:
                 # histórico ainda insuficiente; pula o primeiro(s) dia(s) de janeiro
+                continue"""
+            if idx < TIME_STEPS:
+                # histórico ainda insuficiente; pula o(s) dia(s) de janeiro
                 continue
+            seq_start = idx - TIME_STEPS
 
             X_seq = df_full.loc[seq_start:idx - 1, features] \
                             .values.reshape(1, TIME_STEPS, len(features))
@@ -415,7 +472,8 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
         logger.warning(f"{barcode} | NN – nenhuma predição gerada para 2024")
         return pd.DataFrame(), {}, pd.DataFrame()
 
-    df_daily = pd.DataFrame(daily_rows)
+    #df_daily = pd.DataFrame(daily_rows)
+    df_daily = pd.DataFrame(daily_rows).dropna(subset=["forecast"])
 
     # ---------- 5) EXPORTAÇÃO DE CSVs + GRÁFICOS -----------------
     out_dir = f"data/predictions/NN/{barcode}"
@@ -440,15 +498,15 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
         pd.concat(rolling_frames).reset_index(drop=True)
         if rolling_frames else pd.DataFrame()
     )
-
-    del model
-    free_gpu_memory()
-
+    
     # ---------------- SALVAMENTO -------------------------
     os.makedirs(model_dir, exist_ok=True)
     model.save(model_path, include_optimizer=False)
     joblib.dump(scaler, scaler_path)
     logger.info(f"{barcode} | Rede NN + scaler salvos em {model_dir}")
+
+    del model
+    free_gpu_memory()
 
     return df_roll, nn_metrics_2024, (
         df_daily.rename(columns={"date": "Date"})[["Date", "real", "forecast"]]

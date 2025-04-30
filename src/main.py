@@ -11,6 +11,8 @@
 
 # ---------- Ajustes globais de GPU ---------------------------------
 import os
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["OPENBLAS_NUM_THREADS"] = "2"
 os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"      # devolve VRAM assim que possível
 # -------------------------------------------------------------------
 
@@ -19,12 +21,12 @@ import multiprocessing as mp
 mp.set_start_method("spawn", force=True)                  # contexto CUDA limpo
 
 # --------- SEMÁFOROS / LIMITES -------------------------------------
-MAX_PARALLEL_PROCS  = 1     # quantos subprocessos vivos no total?
-MAX_XGB_CONCURRENT  = 1     # quantos XGB simultâneos na GPU?
+MAX_PARALLEL_PROCS  = 4     # quantos subprocessos vivos no total?
+MAX_XGB_CONCURRENT  = 2     # quantos XGB simultâneos na GPU?
 # ––– locks ----------------------------------------------------------
 proc_lock        = mp.Semaphore(MAX_PARALLEL_PROCS)   # limite global de processos
 xgb_gpu_lock     = mp.Semaphore(MAX_XGB_CONCURRENT)   # GPU “leve” (XGBoost)
-nn_gpu_lock      = mp.Semaphore(2)                    # GPU “pesada” (NN) – exclusividade
+nn_gpu_lock      = mp.Semaphore(1)                    # GPU “pesada” (NN) – exclusividade
 # -------------------------------------------------------------------
 
 from utils.logging_config import get_logger
@@ -48,6 +50,8 @@ logger = get_logger(__name__)
 def processar_produto(barcode: str, df_raw,
                       xgb_gpu_lock, nn_gpu_lock, proc_lock):
     """Cadeia completa (features → modelos → métricas) por produto."""
+    
+    slot_released = False          # ← controla liberação antecipada
     # logger dedicado
     # logger = get_logger(f"PROD_{barcode}", log_file=f"logs/{barcode}.log")
 
@@ -65,6 +69,16 @@ def processar_produto(barcode: str, df_raw,
             results["xgboost"] = {"metrics": xgb_metrics,
                                   "predictions": df_xgb_2024}
             logger.info("XGBoost concluído.")
+
+            free_gpu_memory()        #  <──  força descarte de buffers do XGB
+            slot_released = True
+            logger.debug("Slot global liberado após XGBoost; aguardando NN…")
+            proc_lock.release()                 # <- libera já aqui
+            logger.debug("Slot global liberado após XGBoost; aguardando NN…")
+
+
+            slot_released = True
+            logger.debug("Slot global liberado após XGBoost; aguardando NN…")
 
         # 3) LSTM / Attention – GPU “pesada” (exclusiva)
         with nn_gpu_lock:
@@ -108,7 +122,8 @@ def processar_produto(barcode: str, df_raw,
         logger.error(traceback.format_exc())
     finally:
         free_gpu_memory()        # liberação total de VRAM
-        proc_lock.release()      # devolve “vaga” de subprocesso
+        if not slot_released:    # libera caso XGBoost tenha falhado
+            proc_lock.release()
 
 # ============================================================
 #  EXECUÇÃO – **PARALELO CONTROLADO**  (ativa por padrão)
@@ -129,6 +144,8 @@ def main():
                              xgb_gpu_lock, nn_gpu_lock, proc_lock))
         p.start()
         processes.append(p)
+        logger.info(f"{len(mp.active_children())} processos ativos…")
+
     for p in processes:
         p.join()
     # ---------------------------------------------------------

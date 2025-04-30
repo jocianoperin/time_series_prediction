@@ -9,7 +9,10 @@
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
+import numpy as np
+from utils.logging_config import get_logger
 
+logger = get_logger(__name__)
 
 # ------------------------------------------------------------
 #  FUNÇÃO AUXILIAR – NORMALIZA NOME DA COLUNA DE PREVISÃO
@@ -27,6 +30,7 @@ def _normalizar_preds(df: pd.DataFrame, model_name: str) -> pd.DataFrame:
     possiveis = [
         "forecast",
         f"prediction_{model_name}",
+        "prediction",
         "predicted",
         "yhat",
     ]
@@ -44,11 +48,11 @@ def _normalizar_preds(df: pd.DataFrame, model_name: str) -> pd.DataFrame:
 #  FUNÇÃO PRINCIPAL – COMPARAÇÃO / CONSOLIDAÇÃO / PLOTAGEM
 # ------------------------------------------------------------
 def compare_and_save_results(
-    barcode: str,
-    results: dict,
-    base_pred_dir: str = "data/predictions",
-    base_plot_dir: str = "data/plots",
-) -> None:
+        barcode: str,
+        results: dict,
+        base_pred_dir: str = "data/predictions",
+        base_plot_dir: str = "data/plots",
+    ) -> None:
     """
     Consolida métricas e predições de diferentes modelos para um produto
     específico (`barcode`) e produz:
@@ -90,10 +94,14 @@ def compare_and_save_results(
         )
 
         # ------- MÉTRICAS ----------------------------------
-        if "metrics" in data and data["metrics"]:
+        """if "metrics" in data and data["metrics"]:
             m = data["metrics"].copy()
             m["model"] = model_name
-            metrics_list.append(m)
+            metrics_list.append(m)"""
+        
+        m = data.get("metrics", {})
+        m["model"] = model_name
+        metrics_list.append(m)
 
     # nada para consolidar → aborta silenciosamente
     if merged_preds is None:
@@ -104,7 +112,8 @@ def compare_and_save_results(
         merged_preds = merged_preds.rename(columns={real_col_name: "real"})
 
     # ------------------- SAÍDAS ---------------------------
-    out_cmp_dir = os.path.join(base_pred_dir, "comparativo")
+    # --- agora cada barcode tem uma subpasta própria -------------
+    out_cmp_dir = os.path.join(base_pred_dir, "comparativo", barcode)
     os.makedirs(out_cmp_dir, exist_ok=True)
 
     # — métricas agregadas —
@@ -122,6 +131,25 @@ def compare_and_save_results(
         index=False,
     )
 
+    # -------- CSVs diários por mês -----------------------------
+    merged_preds["year"]  = merged_preds["Date"].dt.year
+    merged_preds["month"] = merged_preds["Date"].dt.month
+
+    for (yr, mn), df_m in merged_preds.groupby(["year", "month"]):
+        # métricas diárias por modelo
+        for mdl in [c for c in df_m.columns if c not in {"Date", "real", "year", "month"}]:
+            df_m[f"mae_{mdl}"]  = (df_m[mdl] - df_m["real"]).abs()
+            df_m[f"rmse_{mdl}"] = np.sqrt((df_m[mdl] - df_m["real"])**2)
+            df_m[f"mape_{mdl}"] = df_m[f"mae_{mdl}"] / df_m["real"].replace(0, np.nan) * 100
+            df_m[f"smape_{mdl}"]= df_m[f"mae_{mdl}"] / ((df_m["real"].abs() + df_m[mdl].abs())/2).replace(0, np.nan) * 100
+
+        csv_path = os.path.join(
+            out_cmp_dir,
+            f"{barcode}_{yr}_{mn:02d}_diario.csv"
+        )
+        df_m.drop(columns=["year", "month"]).to_csv(csv_path, index=False)
+
+
     # ------------------- GRÁFICOS -------------------------
     plot_dir = os.path.join(base_plot_dir, "comparativo", barcode)
     os.makedirs(plot_dir, exist_ok=True)
@@ -134,33 +162,48 @@ def compare_and_save_results(
     ):
         plt.figure(figsize=(10, 5))
 
-        # — série real —
+        # --- REAL ---
         plt.plot(
             df_month["Date"],
             df_month["real"],
             label="REAL",
             marker="o",
+            linestyle="-",
         )
 
-        # — séries dos modelos —
-        for model in metrics_df["model"].tolist() if not metrics_df.empty else []:
-            if model in df_month.columns:
-                plt.plot(
-                    df_month["Date"],
-                    df_month[model],
-                    label=model.upper(),
-                    marker="x",
-                )
+        # --- XGBOOST ---
+        if "xgboost" in df_month.columns:
+            plt.plot(
+                df_month["Date"],
+                df_month["xgboost"],
+                label="XGBOOST",
+                marker="x",
+                linestyle="-",
+            )
 
+        # --- NN ---
+        if "nn" in df_month.columns:
+            plt.plot(
+                df_month["Date"],
+                df_month["nn"],
+                label="NN",
+                marker="x",
+                linestyle="-",
+            )
+
+        # --- formatação final ---
         plt.title(f"COMPARATIVO – {barcode} – {month:02d}/2024")
-        plt.xlabel("Dia")
+        plt.xlabel("Dia do mês")
         plt.ylabel("Quantidade")
         plt.legend()
         plt.xticks(rotation=45)
         plt.tight_layout()
+
+        # salva
         plt.savefig(
             os.path.join(
                 plot_dir, f"comparativo_{barcode}_2024_{month:02d}.png"
             )
         )
         plt.close()
+        logger.info(f"{barcode} | Comparativo salvo para {month:02d}/2024")

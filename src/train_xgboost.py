@@ -71,7 +71,15 @@ def train_xgboost(df, barcode):
     }
 
     results = []
-    windows = generate_rolling_windows(df_treino)
+    # 1) instância global do scaler, treinada em todo o histórico
+    if booster_loaded:
+        scaler = joblib.load(scaler_path)
+    else:
+        scaler = StandardScaler()
+        scaler.fit(df_treino[features])
+
+    windows = generate_rolling_windows(df_treino, train_days=365, test_days=31, step_days=30)
+
     logger.info(f"{barcode} | Número de janelas geradas para rolling window: {len(windows)}.")
 
     # Rolling windows de 2019 a 2023
@@ -83,16 +91,20 @@ def train_xgboost(df, barcode):
             f"Treino de {train['Date'].min()} a {train['Date'].max()}, "
             f"Teste de {test['Date'].min()} a {test['Date'].max()}"
         )
-
-        scaler = StandardScaler()
-        X_train = scaler.fit_transform(train[features])
+        # Treinamento e teste
+        X_train = scaler.transform(train[features]).astype(np.float32)
         y_train = train["Quantity"].values
-        X_test = scaler.transform(test[features])
-        y_test = test["Quantity"].values
+        
+        X_test  = scaler.transform(test[features]).astype(np.float32)
+        y_test  = test["Quantity"].values
 
         # Diagnóstico: verifica correlação para detectar possíveis vazamentos
         for idx, col in enumerate(features):
-            corr = np.corrcoef(X_train[:, idx], y_train)[0, 1]
+            xi = X_train[:, idx]
+            # pula se Xi ou y_train forem constantes (desvio=0)
+            if np.std(xi) == 0 or np.std(y_train) == 0:
+                continue
+            corr = np.corrcoef(xi, y_train)[0, 1]
             if abs(corr) > 0.99:
                 logger.warning(f"{barcode} | Alta correlação no recurso {col}: {corr:.3f}")
 
@@ -112,7 +124,7 @@ def train_xgboost(df, barcode):
                 dtrain=dtrain,
                 num_boost_round=10000,
                 evals=evals,
-                early_stopping_rounds=200,
+                early_stopping_rounds=50,
                 verbose_eval=False
             )
         except xgb.core.XGBoostError as e:
@@ -123,13 +135,15 @@ def train_xgboost(df, barcode):
                     dtrain=dtrain,
                     evals=evals,
                     num_boost_round=10000,
-                    early_stopping_rounds=200,
+                    early_stopping_rounds=50,
                     verbose_eval=False
                 )
             else:
                 raise
 
         y_pred = booster.predict(dtest)
+        y_pred = np.clip(y_pred, 0, None)        # ← impede valores < 0
+
         metrics = calculate_metrics(y_test, y_pred)
 
         logger.info(
@@ -154,8 +168,7 @@ def train_xgboost(df, barcode):
     # RE-TREINO GLOBAL (2019-2023)  ou  CARREGAMENTO JÁ EXISTENTE
     # -------------------------------------------------------------
     if booster_loaded is None:
-        scaler = StandardScaler()
-        X_train_full = scaler.fit_transform(df_treino[features])
+        X_train_full = scaler.transform(df_treino[features]).astype(np.float32)
         y_train_full = df_treino["Quantity"].values
 
         # split 80/20 para early-stopping
@@ -173,7 +186,7 @@ def train_xgboost(df, barcode):
                 dtrain=dtrain,
                 num_boost_round=10000,
                 evals=evals,
-                early_stopping_rounds=200,
+                early_stopping_rounds=50,
                 verbose_eval=False,
             )
         except xgb.core.XGBoostError as e:
@@ -184,7 +197,7 @@ def train_xgboost(df, barcode):
                     dtrain=dtrain,
                     evals=evals,
                     num_boost_round=10000,
-                    early_stopping_rounds=200,
+                    early_stopping_rounds=50,
                     verbose_eval=False,
                 )
             else:
@@ -209,6 +222,8 @@ def train_xgboost(df, barcode):
         dfuture = xgb.DMatrix(X_future)
 
         y_pred = booster.predict(dfuture)
+        y_pred = np.clip(y_pred, 0, None)        # ← garante somente valores ≥ 0
+
         metrics = calculate_metrics(y_real, y_pred)
 
         logger.info(
