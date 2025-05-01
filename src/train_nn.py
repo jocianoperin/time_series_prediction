@@ -507,6 +507,8 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
 
     del model
     free_gpu_memory()
+    tf.keras.backend.clear_session()
+    gc.collect()
 
     return df_roll, nn_metrics_2024, (
         df_daily.rename(columns={"date": "Date"})[["Date", "real", "forecast"]]

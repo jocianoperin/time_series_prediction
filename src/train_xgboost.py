@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 import matplotlib.pyplot as plt
+import gc
 
 from sklearn.preprocessing import StandardScaler
 from utils.logging_config import get_logger
@@ -330,7 +331,16 @@ def train_xgboost(df, barcode):
     # ------------------------------------------------------------
     logger.info(f"{barcode} | Pipeline XGBoost finalizado com sucesso")
 
-    return pd.concat(results), metrics, pd.concat(forecast_2024)
+    # --- 1) Constrói as saídas antes de deletar anything ---
+    df_results   = pd.concat(results)
+    df_forecast  = pd.concat(forecast_2024)
+
+    # --- 2) Limpeza de memória (agora que já temos as saídas) ---
+    del booster, scaler, windows, results, forecast_2024
+    gc.collect()
+
+    # --- 3) Retorno ---
+    return df_results, metrics, df_forecast
 
 # ------------------------------------------------------------
 # GERA GRÁFICO MENSAL – REAL × PREVISTO (XGBoost)

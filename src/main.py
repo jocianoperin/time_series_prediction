@@ -64,10 +64,11 @@ def processar_produto(barcode: str, df_raw, xgb_gpu_lock, nn_gpu_lock, proc_lock
             
             logger.info(f"[{barcode}] XGBoost concluído")
             free_gpu_memory()
-            
-            slot_released = True
-            proc_lock.release()
-            logger.debug(f"[{barcode}] Slot global liberado após XGBoost")
+
+            # Comentando para liberar apenas ao final de tudo, evitando sobrecarga da RAM
+            # slot_released = True
+            # proc_lock.release()
+            # logger.debug(f"[{barcode}] Slot global liberado após XGBoost")
 
         # ----- LSTM / NN (GPU pesada, uso exclusivo) ---------
         with nn_gpu_lock:
@@ -86,8 +87,9 @@ def processar_produto(barcode: str, df_raw, xgb_gpu_lock, nn_gpu_lock, proc_lock
         logger.error(traceback.format_exc())
     finally:
         free_gpu_memory() 
-        if not slot_released:
-            proc_lock.release()
+        # if not slot_released:
+        #     proc_lock.release()
+        proc_lock.release()
 
 # ============================================================
 #  EXECUÇÃO PRINCIPAL – PARALELO CONTROLADO
@@ -96,22 +98,34 @@ def main():
     logger.info("🚀 Iniciando pipeline de predição diária 2024")
 
     dados = carregar_dados("data/raw")
+    itens = list(dados.items())
+    total = len(itens)
     logger.info(f"Dados carregados: {len(dados)} produtos encontrados.")
 
     # ----- EXECUÇÃO EM MULTIPROCESSAMENTO -------------------
-    processes = []
+    # Processa em batches de 20 CSVs por vez
+    batch_size = 20
 
-    for barcode, df in dados.items():
-        proc_lock.acquire()   # respeita MAX_PARALLEL_PROCS
-        p = mp.Process(target=processar_produto,
-                       args=(barcode, df,
-                             xgb_gpu_lock, nn_gpu_lock, proc_lock))
-        p.start()
-        processes.append(p)
-        logger.info(f"{len(mp.active_children())} processos ativos…")
+    for batch_idx in range(0, total, batch_size):
+        batch = itens[batch_idx:batch_idx + batch_size]
+        n_batch = len(batch)
+        logger.info(f"🔄 Iniciando batch {batch_idx//batch_size + 1}: "
+                    f"{n_batch} produtos (índices {batch_idx}–{batch_idx + n_batch - 1})")
+        processes = []
 
-    for p in processes:
-        p.join()
+        for barcode, df in batch:
+            proc_lock.acquire()   # respeita MAX_PARALLEL_PROCS
+            p = mp.Process(target=processar_produto,
+                        args=(barcode, df,
+                                xgb_gpu_lock, nn_gpu_lock, proc_lock))
+            p.start()
+            processes.append(p)
+            logger.info(f"{len(mp.active_children())} processos ativos…")
+
+        for p in processes:
+            p.join()
+
+        logger.info(f"✅ Batch {batch_idx//batch_size + 1} concluído")
     
     # ----- VERSÃO SEQUENCIAL (desativada) -------------------
     # for barcode, df in dados.items():
