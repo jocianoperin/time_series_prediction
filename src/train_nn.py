@@ -1,14 +1,3 @@
-"""
-TRAIN_NN.PY – BLOCO 1/3  (IMPORTS, AJUSTES DE GPU, CONSTANTES E FUNÇÕES AUXILIARES)
------------------------------------------------------------------
-Nesta primeira parte permanecem **apenas**:
-  • imports e configuração de alocador/VRAM
-  • definição de constantes
-  • função helper `create_sequences`
-Os próximos blocos (modelo, treino, exportações) serão adicionados
-na sequência, preservando TODOS os comentários descritivos.
-"""
-
 # ================================================================
 # IMPORTS PRINCIPAIS
 # ================================================================
@@ -26,6 +15,10 @@ random.seed(42)
 np.random.seed(42)
 tf.random.set_seed(42)
 
+# Evita alocar toda a VRAM de uma vez e melhora liberação de contexto
+physical_gpus = tf.config.list_physical_devices('GPU')
+for gpu in physical_gpus:
+    tf.config.experimental.set_memory_growth(gpu, True)
 
 from sklearn.preprocessing import StandardScaler
 from tensorflow.keras.callbacks import EarlyStopping # type: ignore
@@ -48,17 +41,18 @@ from utils.logging_config import get_logger
 from utils.metrics import calculate_metrics
 from data_preparation import generate_rolling_windows
 from utils.gpu_utils import free_gpu_memory  # liberação total de VRAM
+from utils.build_nn_model import layers_cfg
 
 # ================================================================
 # AJUSTES GLOBAIS DE GPU / VRAM
 # ================================================================
 # 1) Usa alocador "cuda_malloc_async" para devolver blocos de VRAM
 #    imediatamente após o tensor ser desalocado.
-os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
+# os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 # 2) Permite que o TensorFlow cresça a memória conforme a demanda
 #os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = "true"
 # 3) Desativa o XLA JIT – costuma reter buffers extras na VRAM
-os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=0"
+# os.environ["TF_XLA_FLAGS"] = "--tf_xla_auto_jit=0"
 
 # → Limita a placa (ex.: GTX 1650 4 GB) a ~3.5 GB para evitar OOM.
 gpus = tf.config.list_physical_devices("GPU")
@@ -75,7 +69,8 @@ if gpus:
 # CONSTANTES E LOGGER
 # ================================================================
 logger = get_logger(__name__)
-TIME_STEPS = 30  # número de passos de tempo usados nas sequências
+
+TIME_STEPS = 7  # número de passos de tempo usados nas sequências
 
 # ================================================================
 # FUNÇÃO AUXILIAR – CRIAÇÃO DE JANELAS SEQUENCIAIS
@@ -142,61 +137,70 @@ def build_lstm_model(
     x = inputs  # tensor corrente
 
     # ---------- Loop pelas camadas definidas em layers_config ------
-    for idx, layer in enumerate(layers_config):
+    for layer in layers_config:
         layer_type = layer.get("type", "LSTM").upper()
         units      = layer.get("units", 64)
-        activation = layer.get("activation", "relu")
+        activation = layer.get("activation", "tanh" if layer_type in {"LSTM", "GRU"} else "relu")
+        rec_act = layer.get("recurrent_activation", "sigmoid")
         dropout    = layer.get("dropout", 0.0)
         return_seq = layer.get("return_sequences", False)
         bidir      = layer.get("bidirectional", False)
 
-        if layer_type in {"LSTM", "GRU", "DENSE"}:
-            # --- cria a camada core --------------------------------
-            if layer_type == "LSTM":
-                core = LSTM(units, activation=activation, return_sequences=return_seq)
-            elif layer_type == "GRU":
-                core = GRU(units, activation=activation, return_sequences=return_seq)
-            else:  # Dense
-                core = Dense(units, activation=activation)
+         # ——— Camadas de sequência ————————————————————————
+        if layer_type == "LSTM":
+            core = LSTM(
+                units,
+                activation=activation,
+                recurrent_activation=rec_act,
+                return_sequences=return_seq
+            )
+            out = Bidirectional(core)(x) if bidir else core(x)
 
-            # --- aplica bidirecional se solicitado -----------------
-            if bidir and layer_type in {"LSTM", "GRU"}:
-                x = Bidirectional(core)(x)
-            else:
-                x = core(x)
+        elif layer_type == "GRU":
+            core = GRU(
+                units,
+                activation=activation,
+                return_sequences=return_seq
+            )
+            out = Bidirectional(core)(x) if bidir else core(x)
 
-            # --- dropout opcional ----------------------------------
-            if dropout > 0:
-                x = Dropout(dropout)(x)
+        # ——— Camada densa —————————————————————————————
+        elif layer_type == "DENSE":
+            out = Dense(units, activation=activation)(x)
 
+        # ——— Bloco de Atenção Multi-Head ——————————————————
         elif layer_type == "ATTN":
-            heads     = layer.get("heads", 4)
-            key_dim   = layer.get("key_dim", 32)
-            attn_drop = layer.get("dropout", 0.0)
+            heads = layer.get("heads", 4)
+            key_dim = layer.get("key_dim", 32)
+            a_drop = layer.get("dropout", 0.0)
 
-            attn_out = MultiHeadAttention(
+            attn = MultiHeadAttention(
                 num_heads=heads,
                 key_dim=key_dim,
-                dropout=attn_drop,
+                dropout=a_drop
             )(x, x)
-            attn_out = Dropout(attn_drop)(attn_out)
-            x        = Add()([x, attn_out])
-            x        = LayerNormalization()(x)
+            attn = Dropout(a_drop)(attn)
+            out = Add()([x, attn])
+            out = LayerNormalization()(out)
+
         else:
             raise ValueError(f"Tipo de camada desconhecido: {layer_type}")
 
-    # ---------- Pooling se tensor ainda for 3‑D ---------------------
+        # ——— Dropout opcional (fora do core) ——————————
+        x = Dropout(dropout)(out) if (dropout and layer_type != "ATTN") else out
+
+    # Se ainda for 3-D, aplica pooling para achatar
     if len(x.shape) == 3:
         x = GlobalAveragePooling1D()(x)
 
-    # ---------- Saída densa de regressão ----------------------------
-    outputs = Dense(1)(x)
+    # Camada de saída linear para regressão
+    outputs = Dense(1, activation="linear")(x)
 
-    # ---------- Compilação do modelo --------------------------------
+    # Compilação com MAE para favorecer picos
     model = Model(inputs, outputs)
     model.compile(
         optimizer=Adam(learning_rate=learning_rate, clipnorm=1.0),
-        loss="huber",
+        loss="mean_absolute_error"
     )
 
     return model
@@ -288,25 +292,6 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
 
     # ---------- 2) AVALIAÇÃO ROLLING 365×31 ----------------------
     windows = generate_rolling_windows(df_treino, train_days=365, test_days=TIME_STEPS + 1)
-
-    layers_cfg = [
-        #INTERMEDIÁRIA
-        {"type":"LSTM", "units":128, "activation":"relu", "dropout": 0.1, "return_sequences":True, "bidirectional": True},
-        {"type":"LSTM", "units":64,  "activation":"relu", "dropout": 0.1, "return_sequences":False},
-        {"type":"Dense","units":32,  "activation":"relu", "dropout": 0.1},
-        # Camada 1 removida (a de 512 unidades)
-        #{"type": "LSTM", "units": 512, "activation": "relu", "dropout": 0.4, "return_sequences": True, "bidirectional": True},
-        # Nova 1: LSTM com 256 unidades, bidirecional, permanece a mesma
-        #{"type": "LSTM", "units": 256, "activation": "relu", "dropout": 0.1, "return_sequences": True, "bidirectional": True},
-        # A camada GRU permanece
-        #{"type": "GRU",  "units": 128, "activation": "relu", "dropout": 0.1, "return_sequences": True},
-        # Camada de atenção permanece
-        #{"type": "ATTN", "heads": 4,   "key_dim": 32, "dropout": 0.1},
-        # Camada 5 removida (a de 64 unidades)
-        #{"type": "LSTM", "units": 64,  "activation": "relu", "dropout": 0.2, "return_sequences": False},
-        # Camada final densa permanece
-        #{"type": "Dense","units": 32,  "activation": "relu", "dropout": 0.1},
-    ]
 
     lr          = 1e-4
     batch_size  = 16

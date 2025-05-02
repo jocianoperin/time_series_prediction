@@ -31,8 +31,11 @@ time_series_prediction/
 │   ├── feature_engineering.py
 │   ├── train_nn.py
 │   ├── train_xgboost.py
-│   ├── utils.py
-│   └── main.py
+│   ├── main.py
+│   └── utils/
+│       ├── build_nn_model.py  # define a função build_lstm_model
+│       ├── logging_config.py
+│       └── metrics.py
 ├── requirements.txt
 └── README.md
 ```
@@ -109,6 +112,29 @@ python src/main.py
 
 ---
 
+## 🛠️ Pipeline Principal (`src/main.py`)
+
+Este script foi reorganizado para:
+
+- **Controle de concorrência** usando `multiprocessing` e semáforos:
+    - **MAX_PARALLEL_PROCS:** processos simultâneos (e.g. 4)  
+    - **MAX_XGB_CONCURRENT:** XGBoost concorrentes (GPU leve)  
+    - **NN_GPU_LOCK:** GPU exclusiva para Redes Neurais  
+- **Otimizações de GPU/BLAS:**
+
+    ```python
+    os.environ["OMP_NUM_THREADS"]       = "2"
+    os.environ["OPENBLAS_NUM_THREADS"]  = "2"
+    ```
+
+- **Fluxo de processamento** por produto:
+    1. Leitura e conversão de datas  
+    2. Feature engineering (`create_features`)  
+    3. Treino XGBoost em paralelo  
+    4. Treino NN (LSTM/GRU/ATTN) em exclusividade de GPU  
+    5. Consolidação de previsões e métricas  
+    6. Movimento dos CSVs processados para `data/processed/`
+
 ## 🛠️ Adicionando Features
 
 Para adicionar novas features ao projeto:
@@ -124,33 +150,34 @@ df["nova_feature"] = df["feature_existente"].shift(7)  # exemplo de nova feature
 
 ---
 
-## 🧠 Modificando as camadas da Rede Neural (LSTM)
+## 🧠 Modificando as camadas da Rede Neural (NN)
 
-Para alterar a arquitetura LSTM:
+A definição da arquitetura está agora isolada em `src/utils/build_nn_model.py`. Para alterar:
 
-1. Abra o arquivo `src/train_nn.py`.
-2. Localize a função `build_model(input_shape)`.
-3. Ajuste a estrutura da rede conforme desejado.
+1. Abra o arquivo `src/utils/build_nn_model.py`.  
+2. Localize a variável `layers_config`, que é uma lista de dicionários com as suas camadas.  
+3. Adicione, remova ou edite cada entry conforme desejado.  
+4. Salve e execute o pipeline (`python src/main.py` ou `python src/train_nn.py`) para validar.
 
-Exemplo original:
+### Exemplo original de `layers_config`
 
 ```python
-model = Sequential([
-    LSTM(128, activation='relu', dropout: 0.1, return_sequences=True, bidirectional=True),
-    LSTM(64, activation='relu', dropout: 0.1, return_sequences=False),
-    Dense(32, activation='relu', dropout: 0.1),
-])
+layers_cfg = [
+    {"type": "LSTM",   "units": 128, "activation": "relu", "dropout": 0.1, "return_sequences": True,  "bidirectional": True},
+    {"type": "LSTM",   "units": 64,  "activation": "relu", "dropout": 0.1, "return_sequences": False},
+    {"type": "Dense",  "units": 32,  "activation": "relu", "dropout": 0.1},
+]
 ```
 
 Exemplo com camada adicional:
 
 ```python
-model = Sequential([
-    LSTM(128, activation='relu', dropout: 0.1, return_sequences=True, bidirectional=True),
-    LSTM(64, activation='relu', dropout: 0.1, return_sequences=False),
-    LSTM(32, activation='relu', dropout: 0.1),
-    Dense(32, activation='relu', dropout: 0.1),
-])
+layers_cfg = [
+    {"type": "LSTM",   "units": 128, "activation": "relu", "dropout": 0.1, "return_sequences": True,  "bidirectional": True},
+    {"type": "LSTM",   "units": 64,  "activation": "relu", "dropout": 0.1, "return_sequences": True},
+    {"type": "LSTM",   "units": 32,  "activation": "relu", "dropout": 0.1},
+    {"type": "Dense",  "units": 32,  "activation": "relu", "dropout": 0.1},
+]
 ```
 # Camada 1 removida (a de 512 unidades)
         #{"type": "LSTM", "units": 512, "activation": "relu", "dropout": 0.4, "return_sequences": True, "bidirectional": True},

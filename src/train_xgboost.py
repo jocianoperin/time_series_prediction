@@ -77,19 +77,21 @@ def train_xgboost(df, barcode):
 
     # ----- PARÂMETROS BASE DO XGBoost ---------------------
     params = {
-        "objective": "reg:squarederror",   # Função de perda para regressão (erro quadrático)
-        "eval_metric": "mae",              # Métrica de avaliação: erro absoluto médio
-        "learning_rate": 0.01,             # Taxa de aprendizado (eta) — menor = mais estável
-        "max_depth": 6,                    # Profundidade máxima de cada árvore
-        "subsample": 0.8,                  # Proporção de amostras para cada árvore (evita overfitting)
-        "colsample_bytree": 0.8,           # Proporção de features usadas por árvore (aleatorização)
-        "min_child_weight": 3,             # Mínimo de instâncias por folha (controle de complexidade)
-        "gamma": 0.1,                      # Ganho mínimo para realizar split (regularização)
-        "lambda": 1.0,                     # Termo L2 de regularização dos pesos (Ridge)
-        "tree_method": "hist",             # Algoritmo baseado em histogramas (eficiente p/ CPU e GPU)
-        "device": "cuda",                  # Executa o treinamento na GPU via CUDA
-        "verbosity": 0,                    # Silencia logs internos do XGBoost (0 = silencioso)
-        "seed": 42                         # Semente para reprodutibilidade dos resultados
+        "objective": "reg:squarederror",        # Função de perda para regressão (erro quadrático)
+        "eval_metric": "mae",                   # Métrica de avaliação: erro absoluto médio
+        "learning_rate": 0.01,                  # Taxa de aprendizado (eta) — menor = mais estável
+        "max_depth": 5,                         # Profundidade máxima de cada árvore
+        "subsample": 0.8,                       # Proporção de amostras para cada árvore (evita overfitting)
+        "colsample_bytree": 0.8,                # Proporção de features usadas por árvore (aleatorização)
+        "min_child_weight": 3,                  # Mínimo de instâncias por folha (controle de complexidade)
+        "gamma": 0.1,                           # Ganho mínimo para realizar split (regularização)
+        "lambda": 1.0,                          # Termo L2 de regularização dos pesos (Ridge)
+        "tree_method": "gpu_hist",              # Algoritmo baseado em histogramas (eficiente p/ CPU e GPU)
+        "max_bin": 64,                          # ↓ bins 256→64 ⇒ –VRAM ~3×
+        "single_precision_histogram": True,     # usa FP32 em vez de FP64
+        "device": "cuda",                       # Executa o treinamento na GPU via CUDA
+        "verbosity": 0,                         # Silencia logs internos do XGBoost (0 = silencioso)
+        "seed": 42                              # Semente para reprodutibilidade dos resultados
     }
 
     results = []
@@ -102,7 +104,7 @@ def train_xgboost(df, barcode):
         scaler.fit(df_treino[features])
 
     # ----- CRIA JANELAS DE ROLLING (365+31) ---------------
-    windows = generate_rolling_windows(df_treino, train_days=365, test_days=31, step_days=30)
+    windows = generate_rolling_windows(df_treino, train_days=365, test_days=7, step_days=7)
 
     logger.info(f"{barcode} | Número de janelas geradas para rolling window: {len(windows)}.")
 
