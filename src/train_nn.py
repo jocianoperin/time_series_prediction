@@ -291,12 +291,12 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
 
 
     # ---------- 2) AVALIAÇÃO ROLLING 365×31 ----------------------
-    windows = generate_rolling_windows(df_treino, train_days=365, test_days=TIME_STEPS + 1)
+    windows = generate_rolling_windows(df_treino, train_days=365, test_days=TIME_STEPS + 1, step_days=7)
 
     lr          = 1e-4
     batch_size  = 16
     epochs      = 800
-    patience    = 50
+    patience    = 100
     fine_epochs = 10    # fine‑tune mensal
     fine_batch  = 20
 

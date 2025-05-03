@@ -185,8 +185,8 @@ if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
 
     # ----- LIMITES DE CONCORRÊNCIA -----------------------------
-    MAX_PARALLEL_PROCS = 4     # Máximo de processos simultâneos
-    MAX_XGB_CONCURRENT = 1     # XGBoosts simultâneos na GPU
+    MAX_PARALLEL_PROCS = 8     # Máximo de processos simultâneos
+    MAX_XGB_CONCURRENT = 4     # XGBoosts simultâneos na GPU
     proc_lock    = mp.Semaphore(MAX_PARALLEL_PROCS)   # controle global
     xgb_gpu_lock = mp.Semaphore(MAX_XGB_CONCURRENT)   # GPU leve
     nn_gpu_lock  = mp.Semaphore(1)                    # GPU exclusiva para NN
