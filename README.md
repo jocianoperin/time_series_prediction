@@ -179,18 +179,23 @@ layers_cfg = [
     {"type": "Dense",  "units": 32,  "activation": "relu", "dropout": 0.1},
 ]
 ```
-# Camada 1 removida (a de 512 unidades)
-        #{"type": "LSTM", "units": 512, "activation": "relu", "dropout": 0.4, "return_sequences": True, "bidirectional": True},
-        # Nova 1: LSTM com 256 unidades, bidirecional, permanece a mesma
-        #{"type": "LSTM", "units": 256, "activation": "relu", "dropout": 0.1, "return_sequences": True, "bidirectional": True},
-        # A camada GRU permanece
-        #{"type": "GRU",  "units": 128, "activation": "relu", "dropout": 0.1, "return_sequences": True},
-        # Camada de atenção permanece
-        #{"type": "ATTN", "heads": 4,   "key_dim": 32, "dropout": 0.1},
-        # Camada 5 removida (a de 64 unidades)
-        #{"type": "LSTM", "units": 64,  "activation": "relu", "dropout": 0.2, "return_sequences": False},
-        # Camada final densa permanece
-        #{"type": "Dense","units": 32,  "activation": "relu", "dropout": 0.1},
+
+Camada 1 removida (a de 512 unidades)
+
+```python
+#{"type": "LSTM", "units": 512, "activation": "relu", "dropout": 0.4, "return_sequences": True, "bidirectional": True},
+# Nova 1: LSTM com 256 unidades, bidirecional, permanece a mesma
+#{"type": "LSTM", "units": 256, "activation": "relu", "dropout": 0.1, "return_sequences": True, "bidirectional": True},
+# A camada GRU permanece
+#{"type": "GRU",  "units": 128, "activation": "relu", "dropout": 0.1, "return_sequences": True},
+# Camada de atenção permanece
+#{"type": "ATTN", "heads": 4,   "key_dim": 32, "dropout": 0.1},
+# Camada 5 removida (a de 64 unidades)
+#{"type": "LSTM", "units": 64,  "activation": "relu", "dropout": 0.2, "return_sequences": False},
+# Camada final densa permanece
+#{"type": "Dense","units": 32,  "activation": "relu", "dropout": 0.1},
+```
+
 ---
 
 ### ⚙️ Hiperparâmetros do XGBoost
