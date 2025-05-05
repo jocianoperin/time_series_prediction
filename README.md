@@ -94,17 +94,12 @@ cd time_series_prediction
 ### 2. Crie e ative o ambiente Conda
 
 ```bash
-conda create -n tsenv python=3.10
+conda env create -f environment.yml
 conda activate tsenv
 ```
 
-### 3. Instale as dependências
 
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Execute o pipeline principal
+### 3. Execute o pipeline principal
 
 ```bash
 python src/main.py

@@ -1,9 +1,0 @@
-pandas
-numpy
-scikit-learn
-xgboost
-pmdarima
-statsmodels
-prophet
-keras
-tensorflow
