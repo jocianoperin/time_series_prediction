@@ -82,7 +82,7 @@ def processar_produto(barcode: str, df_raw, xgb_gpu_lock, nn_gpu_lock, proc_lock
             # logger.debug(f"[{barcode}] Slot global liberado após XGBoost")
 
         # ----- LSTM / NN (GPU pesada, uso exclusivo) ---------
-        with nn_gpu_lock:
+        """with nn_gpu_lock:
             logger.info("Iniciando LSTM (NN)…")
             df_nn_all, nn_metrics, df_nn_2024 = train_neural_network(df, barcode)
             results["nn"] = {"metrics": nn_metrics,
@@ -91,7 +91,7 @@ def processar_produto(barcode: str, df_raw, xgb_gpu_lock, nn_gpu_lock, proc_lock
             logger.info(f"[{barcode}] LSTM concluído")
         
         # ----- CONSOLIDAÇÃO FINAL ----------------------------
-        compare_and_save_results(barcode, results)
+        compare_and_save_results(barcode, results)"""
 
     except Exception as exc:
         logger.error(f"[{barcode}] Erro no pipeline: {exc}")
@@ -186,7 +186,7 @@ if __name__ == "__main__":
 
     # ----- LIMITES DE CONCORRÊNCIA -----------------------------
     MAX_PARALLEL_PROCS = 8     # Máximo de processos simultâneos
-    MAX_XGB_CONCURRENT = 4     # XGBoosts simultâneos na GPU
+    MAX_XGB_CONCURRENT = 8     # XGBoosts simultâneos na GPU
     proc_lock    = mp.Semaphore(MAX_PARALLEL_PROCS)   # controle global
     xgb_gpu_lock = mp.Semaphore(MAX_XGB_CONCURRENT)   # GPU leve
     nn_gpu_lock  = mp.Semaphore(1)                    # GPU exclusiva para NN
