@@ -18,14 +18,7 @@ os.environ["OPENBLAS_NUM_THREADS"] = "2"
 import multiprocessing as mp
 import traceback
 import pandas as pd
-#mp.set_start_method("spawn", force=True)
-
-# ----- LIMITES DE CONCORRÊNCIA -----------------------------
-#MAX_PARALLEL_PROCS = 4     # Máximo de processos simultâneos
-#MAX_XGB_CONCURRENT = 2     # XGBoosts simultâneos na GPU
-#proc_lock    = mp.Semaphore(MAX_PARALLEL_PROCS)   # controle global
-#xgb_gpu_lock = mp.Semaphore(MAX_XGB_CONCURRENT)   # GPU leve
-#nn_gpu_lock  = mp.Semaphore(1)                    # GPU exclusiva para NN
+# mp.set_start_method("spawn", force=True)  # configurado no bloco __main__
 
 # ----- IMPORTS DO PIPELINE ----------------------------------
 from utils.logging_config import get_logger
@@ -57,8 +50,6 @@ def processar_produto(barcode: str, df_raw, xgb_gpu_lock, nn_gpu_lock, proc_lock
     else:
         barcode = base
 
-    slot_released = False
-    
     try:
         logger.info(f"[{barcode}] Iniciando processamento…")
 
@@ -68,7 +59,7 @@ def processar_produto(barcode: str, df_raw, xgb_gpu_lock, nn_gpu_lock, proc_lock
 
         # ----- XGBOOST (GPU leve, concorrente) --------------
         with xgb_gpu_lock:
-            logger.info("Iniciando XGBoost…")
+            logger.info(f"[{barcode}] Iniciando XGBoost…")
             df_xgb_all, xgb_metrics, df_xgb_2024 = train_xgboost(df, barcode)
             results["xgboost"] = {"metrics": xgb_metrics,
                                   "predictions": df_xgb_2024}
@@ -76,14 +67,10 @@ def processar_produto(barcode: str, df_raw, xgb_gpu_lock, nn_gpu_lock, proc_lock
             logger.info(f"[{barcode}] XGBoost concluído")
             free_gpu_memory()
 
-            # Comentando para liberar apenas ao final de tudo, evitando sobrecarga da RAM
-            # slot_released = True
-            # proc_lock.release()
-            # logger.debug(f"[{barcode}] Slot global liberado após XGBoost")
-
         # ----- LSTM / NN (GPU pesada, uso exclusivo) ---------
-        """with nn_gpu_lock:
-            logger.info("Iniciando LSTM (NN)…")
+        """
+        with nn_gpu_lock:
+            logger.info(f"[{barcode}] Iniciando LSTM (NN)…")
             df_nn_all, nn_metrics, df_nn_2024 = train_neural_network(df, barcode)
             results["nn"] = {"metrics": nn_metrics,
                              "predictions": df_nn_2024}
@@ -91,14 +78,15 @@ def processar_produto(barcode: str, df_raw, xgb_gpu_lock, nn_gpu_lock, proc_lock
             logger.info(f"[{barcode}] LSTM concluído")
         
         # ----- CONSOLIDAÇÃO FINAL ----------------------------
-        compare_and_save_results(barcode, results)"""
+        compare_and_save_results(barcode, results)
+        """
 
     except Exception as exc:
         logger.error(f"[{barcode}] Erro no pipeline: {exc}")
         logger.error(traceback.format_exc())
     finally:
+        # Limpa completamente a sessão para liberar VRAM
         free_gpu_memory() 
-        # limpa sessão TF/Keras para realmente liberar a VRAM
         tf.keras.backend.clear_session()
         gc.collect()
         free_gpu_memory()
@@ -111,8 +99,7 @@ def main(proc_lock, xgb_gpu_lock, nn_gpu_lock):
     logger.info("🚀 Iniciando pipeline de predição diária 2024")
 
     # ----- EXECUÇÃO EM MULTIPROCESSAMENTO -------------------
-    # Processa em batches de 20 CSVs por vez
-    batch_size = 20
+    batch_size = 20                      # processa em batches de 20 CSVs por vez
 
     # ------------------------------------------------------------
     #  CARREGA .CSV E MOVE PARA processed APÓS PROCESSAMENTO OK
@@ -121,75 +108,81 @@ def main(proc_lock, xgb_gpu_lock, nn_gpu_lock):
     processed_dir = os.path.join(raw_dir, "processed")
     os.makedirs(processed_dir, exist_ok=True)
 
-    # Lista todos os CSVs ainda não processados
     arquivos = [f for f in os.listdir(raw_dir) if f.endswith(".csv")]
     total = len(arquivos)
     logger.info(f"Arquivos encontrados: {total} CSV(s) em '{raw_dir}'.")
 
+    # ------------------------------------------------------------
+    #  LOOP DE BATCHES (20 EM 20)
+    # ------------------------------------------------------------
     for batch_idx in range(0, total, batch_size):
-        batch_files = arquivos[batch_idx:batch_idx + batch_size]
+        batch_files = arquivos[batch_idx : batch_idx + batch_size]
         n_batch = len(batch_files)
-        logger.info(f"🔄 Iniciando batch {batch_idx//batch_size + 1}: "
-                    f"{n_batch} arquivos CSV (índices {batch_idx}–{batch_idx + n_batch - 1})")
-        processes = []
 
+        logger.info(
+            f"🔄 Iniciando batch {batch_idx//batch_size + 1}: "
+            f"{n_batch} arquivos CSV "
+            f"(índices {batch_idx}–{batch_idx + n_batch - 1})"
+        )
+
+        processes = []  # [(Process, filepath, filename)]
+
+        # ----- LANÇA TODOS OS PROCESSOS DO BATCH -------------
         for filename in batch_files:
-            # ——— Extrai o barcode: remove 'produto_' e '.csv'
             base = os.path.splitext(filename)[0]
-            if base.startswith("produto_"):
-                barcode = base[len("produto_"):]
-            else:
-                barcode = base
+            barcode = base[len("produto_"):] if base.startswith("produto_") else base
 
             filepath = os.path.join(raw_dir, filename)
-            # Lê o CSV já convertendo a coluna Date para datetime
             df = pd.read_csv(filepath, parse_dates=["Date"])
 
-            proc_lock.acquire()   # respeita MAX_PARALLEL_PROCS
+            proc_lock.acquire()  # respeita MAX_PARALLEL_PROCS
             p = mp.Process(
                 target=processar_produto,
-                args=(filename, df, xgb_gpu_lock, nn_gpu_lock, proc_lock)
+                args=(filename, df, xgb_gpu_lock, nn_gpu_lock, proc_lock),
+                name=f"proc_{barcode}",
             )
             p.start()
-            processes.append((p, filepath))
+
+            processes.append((p, filepath, filename))
             logger.info(f"{len(mp.active_children())} processos ativos…")
 
-        ec = p.exitcode
+        # ----- ESPERA TODOS OS PROCESSOS TERMINAREM -----------
+        for proc, path, fname in processes:
+            proc.join()                        # bloqueia até finalizar
+            ec = proc.exitcode                 # exitcode confiável
 
-        if ec == 0:
-            # sucesso
-            dest = os.path.join(processed_dir, filename)
-            os.rename(filepath, dest)
-            logger.info(f"✅ '{filename}' movido para '{processed_dir}'")
-        elif ec == -signal.SIGKILL:
-            # morto por SIGKILL (OOM-killer)
-            logger.error(f"❌ '{filename}' foi morto por SIGKILL (possível OOM)")
-        elif ec < 0:
-            # outro sinal
-            sig = -ec
-            logger.error(f"❌ '{filename}' morto pelo sinal {sig}")
-        else:
-            # exitcode > 0 (exceção Python)
-            logger.error(f"❌ Falha ao processar '{filename}' (exitcode={ec})")
+            # ----- AVALIA EXITCODE & MOVE ARQUIVO --------------
+            if ec == 0:
+                dest = os.path.join(processed_dir, fname)
+                try:
+                    os.rename(path, dest)
+                    logger.info(f"✅ '{fname}' movido para '{processed_dir}'")
+                except OSError as e:
+                    logger.error(f"⚠️  Não foi possível mover '{fname}': {e}")
+            elif ec == -signal.SIGKILL:
+                logger.error(f"❌ '{fname}' foi morto por SIGKILL (possível OOM)")
+            elif ec is not None and ec < 0:
+                logger.error(f"❌ '{fname}' morto pelo sinal {-ec}")
+            else:
+                logger.error(f"❌ Falha ao processar '{fname}' (exitcode={ec})")
 
         logger.info(f"✅ Batch {batch_idx//batch_size + 1} concluído")
-    
-    # ----- VERSÃO SEQUENCIAL (desativada) -------------------
-    # for barcode, df in dados.items():
-    #     processar_produto(barcode, df, xgb_gpu_lock, nn_gpu_lock, proc_lock)
 
     logger.info("✅ Pipeline concluído para todos os produtos")
 
+# ============================================================
+#  PONTO DE ENTRADA
+# ============================================================
 if __name__ == "__main__":
-    # ----- MULTIPROCESSAMENTO COM CONTEXTO LIMPO (CUDA) --------
+    # ----- MULTIPROCESSAMENTO COM CONTEXTO LIMPO (CUDA) -----
     mp.set_start_method("spawn", force=True)
 
-    # ----- LIMITES DE CONCORRÊNCIA -----------------------------
-    MAX_PARALLEL_PROCS = 8     # Máximo de processos simultâneos
-    MAX_XGB_CONCURRENT = 8     # XGBoosts simultâneos na GPU
+    # ----- LIMITES DE CONCORRÊNCIA ---------------------------
+    MAX_PARALLEL_PROCS   = 8  # Máx. de processos simultâneos
+    MAX_XGB_CONCURRENT   = 8  # Máx. de XGBoosts simultâneos na GPU
     proc_lock    = mp.Semaphore(MAX_PARALLEL_PROCS)   # controle global
     xgb_gpu_lock = mp.Semaphore(MAX_XGB_CONCURRENT)   # GPU leve
     nn_gpu_lock  = mp.Semaphore(1)                    # GPU exclusiva para NN
 
-    # Inicia o pipeline passando os semáforos criados no escopo do pai
+    # ----- INICIA O PIPELINE --------------------------------
     main(proc_lock, xgb_gpu_lock, nn_gpu_lock)

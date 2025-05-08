@@ -334,15 +334,22 @@ def train_xgboost(df, barcode):
     logger.info(f"{barcode} | Pipeline XGBoost finalizado com sucesso")
 
     # --- 1) Constrói as saídas antes de deletar anything ---
-    df_results   = pd.concat(results)
-    df_forecast  = pd.concat(forecast_2024)
+    # --- Concatena resultados / previsões ou devolve DataFrame vazio -----------
+    df_results  = pd.concat(results,       ignore_index=True) if results       else pd.DataFrame()
+    df_forecast = pd.concat(forecast_2024, ignore_index=True) if forecast_2024 else pd.DataFrame()
+
+    if df_results.empty:
+        logger.warning(f"{barcode} | 'results' vazio — possivelmente não houve janelas rolling suficientes.")
+    if df_forecast.empty:
+        logger.warning(f"{barcode} | 'forecast_2024' vazio — possivelmente não existem dados de 2024 para este produto.")
 
     # --- 2) Limpeza de memória (agora que já temos as saídas) ---
     del booster, scaler, windows, results, forecast_2024
     gc.collect()
 
     # --- 3) Retorno ---
-    return df_results, metrics, df_forecast
+    # Se nenhuma janela foi processada, 'metrics' não existe → devolve dicionário vazio
+    return df_results, metrics if "metrics" in locals() else {}, df_forecast
 
 # ------------------------------------------------------------
 # GERA GRÁFICO MENSAL – REAL × PREVISTO (XGBoost)
