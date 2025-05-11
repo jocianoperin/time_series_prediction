@@ -5,7 +5,7 @@ def get_logger(name: str, log_file: str | None = None) -> logging.Logger:
     os.makedirs("logs", exist_ok=True)
 
     logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
 
     fmt = logging.Formatter("%(asctime)s | %(processName)s | %(levelname)s | %(message)s")
 
