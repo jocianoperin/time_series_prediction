@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 import os
 import re
+import shutil
 
 # Diretórios base
-processed_dir = 'data/processed'
-pred_base      = 'data/predictions/XGBoost'
-plot_base      = 'data/plots/XGBoost'
+data_raw        = 'data/raw'
+processed_dir   = 'data/processed'
+pred_base       = 'data/predictions/XGBoost'
+plot_base       = 'data/plots/XGBoost'
+problems_dir    = os.path.join(data_raw, 'problems')
+
+# Garante que a pasta de problemas existe
+os.makedirs(problems_dir, exist_ok=True)
 
 # Meses esperados (01 a 12)
 expected_months = [f'{i:02d}' for i in range(1, 13)]
 
 # Expressões regulares
-prod_pattern  = re.compile(r'^produto_(\d+)\.csv$')
-pred_pattern  = re.compile(r'XGBoost_daily_\d+_(\d{4})_(\d{2})\.csv')
-plot_pattern  = re.compile(r'XGBoost_\d+_(\d{4})_(\d{2})\.png')
+prod_pattern    = re.compile(r'^produto_(\d+)\.csv$')
+pred_pattern    = re.compile(r'XGBoost_daily_\d+_(\d{4})_(\d{2})\.csv')
+plot_pattern    = re.compile(r'XGBoost_\d+_(\d{4})_(\d{2})\.png')
 
 # Listas de resultado
 complete   = []
@@ -49,7 +55,10 @@ for fname in os.listdir(processed_dir):
     missing_pred = [m for m in expected_months if m not in months_pred]
     missing_plot = [m for m in expected_months if m not in months_plot]
 
-    # Classifica como completo ou incompleto
+    # Classifica e move arquivos problemáticos
+    proc_file = os.path.join(processed_dir, fname)
+    raw_file  = os.path.join(data_raw, fname)
+
     if not missing_pred and not missing_plot:
         complete.append(barcode)
     else:
@@ -60,6 +69,12 @@ for fname in os.listdir(processed_dir):
             parts.append(f"faltam plots nos meses:      {', '.join(missing_plot)}")
         incomplete.append(f"Produto {barcode}: " + ' | '.join(parts))
 
+        # Tenta mover o raw CSV; se não existir, move o processed CSV
+        if os.path.exists(raw_file):
+            shutil.move(raw_file, os.path.join(problems_dir, fname))
+        elif os.path.exists(proc_file):
+            shutil.move(proc_file, os.path.join(problems_dir, fname))
+
 # Gera o relatório em texto
 with open('processing_report.txt', 'w') as f:
     f.write('=== Produtos 100% processados ===\n')
@@ -69,4 +84,5 @@ with open('processing_report.txt', 'w') as f:
     for line in incomplete:
         f.write(f"- {line}\n")
 
-print("Relatório gerado em: processing_report.txt")
+print(f"Relatório gerado em: processing_report.txt")
+print(f"Arquivos problemáticos movidos para: {problems_dir}")
