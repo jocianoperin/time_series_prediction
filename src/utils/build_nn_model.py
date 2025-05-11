@@ -1,4 +1,4 @@
-"""layers_cfg = [
+layers_cfg = [
     # 1️⃣ LSTM bidirecional capta padrões de longo prazo
     {"type": "LSTM", "units": 128, "bidirectional": True,
      "return_sequences": True, "dropout": 0.1},
@@ -15,31 +15,15 @@
 
     # 5️⃣ Dense intermediária
     {"type": "Dense","units": 16, "activation": "relu", "dropout": 0.1}
-]"""
-
-"""layers_cfg = [
-    # 1️⃣ GRU raso, bidirecional opcional (poucos parâmetros)
-    {"type": "GRU",  "units": 80, "bidirectional": True,
-     "return_sequences": True, "dropout": 0.1},
-
-    # 2️⃣ Bloco de Attention (olha padrão semanal)
-    {"type": "ATTN", "heads": 2, "key_dim": 16, "dropout": 0.1},
-
-    # 3️⃣ LSTM unidirecional para memórias longas
-    {"type": "LSTM", "units": 48,
-     "return_sequences": False, "dropout": 0.1},
-
-    # 4️⃣ Dense pequena
-    {"type": "Dense","units": 24, "activation": "relu", "dropout": 0.1}
-]"""
-
+]
+"""
 layers_cfg = [
     # híbrido um pouco maior
     {"type": "GRU",  "units": 96, "bidirectional": True, "return_sequences": True},
     {"type": "ATTN", "heads": 3,  "key_dim": 24, "dropout": 0.1},
     {"type": "LSTM", "units": 64, "return_sequences": False, "dropout": 0.1},
     {"type": "Dense","units": 32, "activation": "relu", "dropout": 0.1},
-]
+]"""
 
 # ----------------------------------------------------------------------
 # 📚  EXPLICAÇÃO DETALHADA DE `layers_cfg`
