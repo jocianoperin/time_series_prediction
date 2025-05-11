@@ -1,10 +1,11 @@
+# Arquivo: main.py  (trecho inicial – novas flags e argparse)
 # ============================================================
 #  MAIN – PIPELINE DE PREVISÃO DIÁRIA 2024 (PARALELO CONTROLADO)
 #  ------------------------------------------------------------
-#  Objetivo:
-#    • Rodar XGBoost de forma concorrente (GPU leve)
-#    • Rodar Rede Neural (LSTM) com exclusividade da GPU
-#    • Consolidar previsões e métricas por produto
+#  Agora suporta:
+#    • --run-xgb / --run-nn ................... treinar/predizer modelos
+#    • --reuse-xgb / --reuse-nn ............... somente ler previsões já salvas
+#    • --reset-xgb / --reset-nn ............... APAGA artefatos e treina do ZERO
 # ============================================================
 
 # ----- AJUSTES DE GPU (OTIMIZAÇÃO DE USO DE VRAM) ----------
@@ -31,18 +32,26 @@ from utils.metrics        import calculate_metrics
 from utils.gpu_utils      import free_gpu_memory
 import tensorflow as tf
 import gc
+# -------------------------------------------------------------------
+RUN_XGB   = True   # True ⇒ treina/prevê com XGBoost
+RUN_NN    = False  # True ⇒ treina/prevê com NN
+REUSE_XGB = False  # True ⇒ carrega CSVs antigos do XGB se RUN_XGB=False
+
+from utils.pred_loader import load_saved_predictions  # NOVO
 
 logger = get_logger(__name__)
 
 # ============================================================
 #  PROCESSA UM ÚNICO PRODUTO – ETAPAS COMPLETAS
 # ============================================================
-def processar_produto(barcode: str, df_raw, xgb_gpu_lock, nn_gpu_lock, proc_lock):
+def processar_produto(barcode: str, df_raw: pd.DataFrame, xgb_gpu_lock, nn_gpu_lock, proc_lock, run_xgb=RUN_XGB, run_nn=RUN_NN, reuse_xgb=REUSE_XGB):
     """
     Executa a cadeia completa de predição para um produto:
     feature engineering → XGBoost → LSTM → consolidação de métricas.
     """
-    
+    results = {}
+    df = create_features(df_raw)
+
     # ————— Normaliza `barcode` removendo prefixo "produto_" e extensão ".csv"
     base = os.path.splitext(barcode)[0]
     if base.startswith("produto_"):
@@ -50,36 +59,46 @@ def processar_produto(barcode: str, df_raw, xgb_gpu_lock, nn_gpu_lock, proc_lock
     else:
         barcode = base
 
+    # ————— Normaliza nome
+    barcode = os.path.splitext(barcode)[0].removeprefix("produto_")
+
     try:
         logger.info(f"[{barcode}] Iniciando processamento…")
 
-        # ----- FEATURE ENGINEERING --------------------------
-        df = create_features(df_raw)
-        results = {}
-
         # ----- XGBOOST (GPU leve, concorrente) --------------
-        with xgb_gpu_lock:
-            logger.info(f"[{barcode}] Iniciando XGBoost…")
-            df_xgb_all, xgb_metrics, df_xgb_2024 = train_xgboost(df, barcode)
-            results["xgboost"] = {"metrics": xgb_metrics,
-                                  "predictions": df_xgb_2024}
-            
-            logger.info(f"[{barcode}] XGBoost concluído")
-            free_gpu_memory()
+        if run_xgb:
+            with xgb_gpu_lock:
+                logger.info(f"[{barcode}] Iniciando XGBoost…")
+                df_xgb_all, xgb_metrics, df_xgb_2024 = train_xgboost(df, barcode)
+                results["xgboost"] = {"metrics": xgb_metrics,
+                                    "predictions": df_xgb_2024}
+                logger.info(f"[{barcode}] XGBoost concluído")
+                free_gpu_memory()
+
+        elif reuse_xgb:
+            # Reutiliza previsões anteriores do XGBoost
+            logger.info(f"[{barcode}] Reutilizando previsões do XGBoost…")
+            df_xgb_2024 = load_saved_predictions(barcode, "XGBoost")
+            if df_xgb_2024.empty:
+                raise ValueError(f"⚠️  Não há previsões anteriores do XGBoost para '{barcode}'")
+            else:
+                mets = calculate_metrics(df_xgb_2024["real"], df_xgb_2024["forecast"])
+                results["xgboost"] = {"metrics": mets,
+                                "predictions": df_xgb_2024}
 
         # ----- LSTM / NN (GPU pesada, uso exclusivo) ---------
-        """
-        with nn_gpu_lock:
-            logger.info(f"[{barcode}] Iniciando LSTM (NN)…")
-            df_nn_all, nn_metrics, df_nn_2024 = train_neural_network(df, barcode)
-            results["nn"] = {"metrics": nn_metrics,
-                             "predictions": df_nn_2024}
-            
-            logger.info(f"[{barcode}] LSTM concluído")
+        if run_nn:
+            with nn_gpu_lock:
+                logger.info(f"[{barcode}] Iniciando LSTM (NN)…")
+                df_nn_all, nn_metrics, df_nn_2024 = train_neural_network(df, barcode)
+                results["nn"] = {"metrics": nn_metrics,
+                                "predictions": df_nn_2024}
+                
+                logger.info(f"[{barcode}] LSTM concluído")
         
         # ----- CONSOLIDAÇÃO FINAL ----------------------------
-        compare_and_save_results(barcode, results)
-        """
+        if results:
+            compare_and_save_results(barcode, results)
 
     except Exception as exc:
         logger.error(f"[{barcode}] Erro no pipeline: {exc}")
@@ -99,7 +118,7 @@ def main(proc_lock, xgb_gpu_lock, nn_gpu_lock):
     logger.info("🚀 Iniciando pipeline de predição diária 2024")
 
     # ----- EXECUÇÃO EM MULTIPROCESSAMENTO -------------------
-    batch_size = 20                      # processa em batches de 20 CSVs por vez
+    batch_size = 50                      # processa em batches de 20 CSVs por vez
 
     # ------------------------------------------------------------
     #  CARREGA .CSV E MOVE PARA processed APÓS PROCESSAMENTO OK
@@ -178,11 +197,12 @@ if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
 
     # ----- LIMITES DE CONCORRÊNCIA ---------------------------
-    MAX_PARALLEL_PROCS   = 8  # Máx. de processos simultâneos
-    MAX_XGB_CONCURRENT   = 8  # Máx. de XGBoosts simultâneos na GPU
+    MAX_PARALLEL_PROCS   = 6  # Máx. de processos simultâneos
+    MAX_XGB_CONCURRENT   = 6  # Máx. de XGBoosts simultâneos na GPU
+    MAX_NN_CONCURRENT    = 1  # Máx. de NNs simultâneas na GPU
     proc_lock    = mp.Semaphore(MAX_PARALLEL_PROCS)   # controle global
     xgb_gpu_lock = mp.Semaphore(MAX_XGB_CONCURRENT)   # GPU leve
-    nn_gpu_lock  = mp.Semaphore(1)                    # GPU exclusiva para NN
+    nn_gpu_lock  = mp.Semaphore(MAX_NN_CONCURRENT)    # GPU exclusiva para NN
 
     # ----- INICIA O PIPELINE --------------------------------
     main(proc_lock, xgb_gpu_lock, nn_gpu_lock)
