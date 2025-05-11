@@ -123,6 +123,19 @@ def compare_and_save_results(
     # Salva CSV com todas as predições do ano
     merged_preds.to_csv(os.path.join(out_cmp_dir, f"predicoes_2024_{barcode}.csv"),index=False,)
 
+    # Salva resumo anual (soma das quantidades por ano)
+    resumo_anual = (
+        merged_preds
+        .assign(year=merged_preds["Date"].dt.year)
+        .groupby("year", as_index=False)[["real", "xgboost", "nn"]]
+        .sum()
+        .sort_values("year")
+    )
+    resumo_anual.to_csv(
+        os.path.join(out_cmp_dir, f"resumo_anual_{barcode}.csv"),
+        index=False
+    )
+
     # --------------------------------------------------------
     # GERA CSVs DIÁRIOS COM MÉTRICAS POR MODELO E POR MÊS
     # --------------------------------------------------------
