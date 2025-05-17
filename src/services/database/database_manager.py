@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
-from src.utils.logging_config import get_logger
+from utils.logging_config import get_logger
 
 # Carregar as variáveis do arquivo .env
 load_dotenv()

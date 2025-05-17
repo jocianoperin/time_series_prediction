@@ -1,5 +1,5 @@
-from src.services.database import DatabaseManager
-from src.utils.logging_config import get_logger
+from services.database.database_manager import DatabaseManager
+from utils.logging_config import get_logger
 from pathlib import Path
 from datetime import datetime, timedelta
 from workalendar.america import Brazil
@@ -39,7 +39,7 @@ def extract_aggregated_data(db_manager: DatabaseManager, produtos: list) -> pd.D
     INNER JOIN produtos pd ON vp.CodigoProduto = pd.Codigo
     WHERE vp.CodigoBarras IS NOT NULL
       AND v.Data BETWEEN '2019-01-01' AND '2024-12-31'
-      AND vp.CodigoProduto IN ({produtos_joined})
+      AND vp.CodigoBarras IN ({produtos_joined})
     GROUP BY DATE(v.Data), vp.CodigoProduto, vp.CodigoBarras
     ORDER BY DATE(v.Data), vp.CodigoProduto;
     """
@@ -265,44 +265,44 @@ def process_individual_data(db_name: str, produtos: list, product_map: dict, out
         codigo_sequencial = product_map[produto]
         df_prod["CodigoProduto"] = codigo_sequencial
 
-        # Agora salvaremos UM CSV para cada código de barras encontrado nesse produto.
         output_dir_db = output_dir / db_name
         output_dir_db.mkdir(parents=True, exist_ok=True)
 
-        # Se houver mais de um CódigoBarras para o mesmo produto, salvamos arquivos separados:
-        for cod_barras in df_prod["CodigoBarras"].unique():
-            # Filtra só aquele código de barras
-            sub_df = df_prod[df_prod["CodigoBarras"] == cod_barras].copy()
+        # Como o SQL já trouxe só esse barcode, não é preciso filtrar de novo:
+        sub_df = df_prod.copy()
 
-            # Remover a coluna CodigoProduto do CSV final
-            if "CodigoProduto" in sub_df.columns:
-                sub_df.drop(columns=["CodigoProduto"], inplace=True)
+        # Remover a coluna CodigoProduto do CSV final
+        if "CodigoProduto" in sub_df.columns:
+            sub_df.drop(columns=["CodigoProduto"], inplace=True)
 
-            # Renomear colunas para inglês, conforme especificado
-            col_rename_map = {
-                "Data": "Date",
-                "CodigoBarras": "Barcode",
-                "EmPromocao": "OnPromotion",
-                "Quantidade": "Quantity",
-                "QuantDevolvida": "ReturnedQuantity",
-                "Desconto": "Discount",
-                "Acrescimo": "Increase",
-                "ValorTotal": "TotalValue",
-                "ValorUnitario": "UnitValue",
-                "ValorCusto": "CostValue",
-                "Feriado": "Holiday"
-            }
-            sub_df.rename(columns=col_rename_map, inplace=True)
+        # Renomear colunas para inglês
+        col_rename_map = {
+            "Data": "Date",
+            "CodigoBarras": "Barcode",
+            "EmPromocao": "OnPromotion",
+            "Quantidade": "Quantity",
+            "QuantDevolvida": "ReturnedQuantity",
+            "Desconto": "Discount",
+            "Acrescimo": "Increase",
+            "ValorTotal": "TotalValue",
+            "ValorUnitario": "UnitValue",
+            "ValorCusto": "CostValue",
+            "Feriado": "Holiday"
+        }
+        sub_df.rename(columns=col_rename_map, inplace=True)
 
-            # Montar o nome do arquivo no padrão solicitado: produto_<CodigoBarras>.csv
-            # Se o cod_barras for None ou vazio, substituímos por algo seguro (ex: "sem_barras")
-            cod_barras_str = str(cod_barras) if cod_barras else "sem_barras"
-            file_path = output_dir_db / f"produto_{cod_barras_str}.csv"
+        # Monta nome do arquivo: produto_<CodigoBarras>.csv
+        cod_barras_str = str(produto)  # converte pra string direto
+        file_path = output_dir_db / f"produto_{cod_barras_str}.csv"
 
-            sub_df.to_csv(file_path, index=False, sep=",")
-            logger.info(
-                f"[{db_name}] Dados do produto {produto} com CodigoBarras={cod_barras_str} salvos em {file_path}."
-            )
+        logger.debug("Únicos em CodigoBarras em df_prod:", df_prod["CodigoBarras"].unique())
+        logger.debug("Tipo de produto:", type(produto))
+
+        # Salvar arquivo CSV
+        sub_df.to_csv(file_path, index=False, sep=",")
+        logger.info(
+            f"[{db_name}] Dados do produto {produto} (barcode={cod_barras_str}) salvos em {file_path}."
+        )
 
 def save_consolidated_data(df: pd.DataFrame, output_dir: Path, db_name: str):
     """
