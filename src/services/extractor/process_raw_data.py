@@ -8,6 +8,20 @@ import statistics  # Usado para calcular mediana
 
 logger = get_logger(__name__)
 
+def get_codigo_produto_by_barcode(db_manager: DatabaseManager, barcode: int | str) -> int | None:
+    """
+    Retorna o CodigoProduto correspondente a um CodigoBarras.
+    Se não existir, devolve None.
+    """
+    query = f"""
+        SELECT vp.CodigoProduto
+        FROM vendasprodutos vp
+        WHERE vp.CodigoBarras = {barcode}
+        LIMIT 1;
+    """
+    res = db_manager.execute_query(query)
+    return res["data"][0]["CodigoProduto"] if res and res["data"] else None
+
 def extract_aggregated_data(db_manager: DatabaseManager, produtos: list) -> pd.DataFrame:
     """
     Extrai dados agregados por dia para cada produto, incluindo CodigoBarras.
@@ -39,7 +53,7 @@ def extract_aggregated_data(db_manager: DatabaseManager, produtos: list) -> pd.D
     INNER JOIN produtos pd ON vp.CodigoProduto = pd.Codigo
     WHERE vp.CodigoBarras IS NOT NULL
       AND v.Data BETWEEN '2019-01-01' AND '2024-12-31'
-      AND vp.CodigoBarras IN ({produtos_joined})
+      AND vp.CodigoProduto IN ({produtos_joined})
     GROUP BY DATE(v.Data), vp.CodigoProduto, vp.CodigoBarras
     ORDER BY DATE(v.Data), vp.CodigoProduto;
     """
@@ -233,8 +247,16 @@ def process_individual_data(db_name: str, produtos: list, product_map: dict, out
     all_dates = pd.date_range(start="2019-01-01", end="2024-12-31", freq="D")
 
     for produto in produtos:
+        barcode = str(produto)
+        codigo_produto = get_codigo_produto_by_barcode(db_manager, barcode)
+
+        if codigo_produto is None:
+            logger.warning(f"[{db_name}] Barcode {barcode} não encontrado – ignorado.")
+            continue
+
         logger.info(f"Processando dados para o produto {produto}.")
-        df = extract_aggregated_data(db_manager, [produto])
+        
+        df = extract_aggregated_data(db_manager, [codigo_produto])
 
         if not df.empty:
             df['Data'] = pd.to_datetime(df['Data'])
@@ -244,12 +266,13 @@ def process_individual_data(db_name: str, produtos: list, product_map: dict, out
         else:
             # DataFrame “vazio” para garantir todas as datas
             df_prod = pd.DataFrame({'Data': all_dates})
-            df_prod["CodigoBarras"] = None
+            # Garante que o CSV mostre SEMPRE o barcode originalmente informado
+            df_prod["CodigoBarras"] = barcode
             df_prod["ValorUnitario"] = 0
             df_prod["ValorCusto"] = 0
             for col in ["Quantidade", "QuantDevolvida", "ValorTotal", "Desconto", "Acrescimo", "EmPromocao"]:
                 df_prod[col] = 0
-            df_prod["CodigoProduto"] = produto
+            df_prod["CodigoProduto"] = codigo_produto
 
         df_prod = add_features(df_prod)
 

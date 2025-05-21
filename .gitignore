@@ -185,3 +185,5 @@ data/
 models/
 
 processing_report.txt
+
+.vscode/
