@@ -318,8 +318,8 @@ def process_individual_data(db_name: str, produtos: list, product_map: dict, out
         cod_barras_str = str(produto)  # converte pra string direto
         file_path = output_dir_db / f"produto_{cod_barras_str}.csv"
 
-        logger.debug("Únicos em CodigoBarras em df_prod:", df_prod["CodigoBarras"].unique())
-        logger.debug("Tipo de produto:", type(produto))
+        logger.debug("Únicos em CodigoBarras em df_prod: %s", df_prod["CodigoBarras"].unique())
+        logger.debug("Tipo de produto: %s", type(produto))
 
         # Salvar arquivo CSV
         sub_df.to_csv(file_path, index=False, sep=",")

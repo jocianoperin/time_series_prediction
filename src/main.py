@@ -62,6 +62,9 @@ parser.add_argument("--reset-xgb",  action="store_true", help="Apagar artefatos 
 parser.add_argument("--reset-nn",   action="store_true", help="Apagar artefatos NN antes de treinar")
 parser.add_argument("--batch-size", type=int, default=BATCH_DEF, help="Qtd. de CSVs por batch (default 50)")
 parser.add_argument("--no-compare", action="store_false", dest="run_compare", help="Não consolidar comparação entre modelos")
+parser.add_argument("--max-procs", type=int, default=1, help="Número máximo de processos simultâneos")
+parser.add_argument("--max-xgb", type=int, default=1, help="Número máximo de XGBoost simultâneos")
+parser.add_argument("--max-nn", type=int, default=1, help="Número máximo de NN simultâneas")
 ARGS, _ = parser.parse_known_args()
 
 # Override apenas se flag presente
@@ -73,6 +76,9 @@ RESET_XGB = ARGS.reset_xgb or RESET_XGB
 RESET_NN  = ARGS.reset_nn  or RESET_NN
 RUN_COMPARE = ARGS.run_compare and RUN_COMPARE
 BATCH_SZ  = ARGS.batch_size
+MAX_PARALLEL_PROCS = ARGS.max_procs
+MAX_XGB_CONCURRENT = ARGS.max_xgb
+MAX_NN_CONCURRENT = ARGS.max_nn
 
 # ============================================================
 #  FUNÇÃO: processar_produto
