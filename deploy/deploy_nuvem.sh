@@ -47,8 +47,9 @@ EOF
 echo "[INFO] Enviando projeto $PROJNAME para o servidor com exclusões..."
 
 rsync -avz -e "ssh -i $KEY -p $PORT" \
-  --exclude 'data/plots' \
-  --exclude 'data/predictions' \
+  --exclude 'models' \
+  --exclude 'logs' \
+  --exclude 'data_backup' \
   --exclude 'deploy' \
   --exclude '.git' \
   --exclude '__pycache__' \
