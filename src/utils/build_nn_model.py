@@ -1,5 +1,18 @@
 layers_cfg = [
     # 1️⃣ LSTM bidirecional capta padrões de longo prazo
+    {"type": "LSTM", "units": 50, "bidirectional": False,
+     "return_sequences": True, "activation": "relu"},
+
+    # 2️⃣ LSTM unidirecional para compressão de sequência
+    {"type": "LSTM", "units": 25, "bidirectional": False,
+     "return_sequences": False, "activation": "relu"},
+
+    # 3️⃣ Dense final para regressão
+    {"type": "Dense", "units": 1}
+]
+"""
+layers_cfg = [
+    # 1️⃣ LSTM bidirecional capta padrões de longo prazo
     {"type": "LSTM", "units": 128, "bidirectional": True,
      "return_sequences": True, "dropout": 0.1},
 
@@ -16,7 +29,6 @@ layers_cfg = [
     # 5️⃣ Dense intermediária
     {"type": "Dense","units": 16, "activation": "relu", "dropout": 0.1}
 ]
-"""
 layers_cfg = [
     # híbrido um pouco maior
     {"type": "GRU",  "units": 96, "bidirectional": True, "return_sequences": True},

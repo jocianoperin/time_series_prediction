@@ -294,11 +294,11 @@ def train_neural_network(df: pd.DataFrame, barcode: str):
     windows = generate_rolling_windows(df_treino, train_days=365, test_days=TIME_STEPS + 1, step_days=7)
 
     lr          = 1e-4
-    batch_size  = 16
-    epochs      = 800
-    patience    = 100
-    fine_epochs = 10    # fine‑tune mensal
-    fine_batch  = 20
+    batch_size  = 128
+    epochs      = 50
+    patience    = 20
+    fine_epochs = 5    # fine‑tune mensal
+    fine_batch  = 64
 
     rolling_frames = []
     for idx, win in enumerate(windows):

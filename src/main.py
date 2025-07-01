@@ -37,13 +37,13 @@ logger = get_logger(__name__)
 # ============================================================
 #  PARÂMETROS PADRÃO (SEM FLAGS)
 # ============================================================
-RUN_XGB   = True      # treina/prevê XGB
-RUN_NN    = False     # treina/prevê NN
-REUSE_XGB = False     # lê previsões XGB
+RUN_XGB   = False      # treina/prevê XGB
+RUN_NN    = True     # treina/prevê NN
+REUSE_XGB = True     # lê previsões XGB
 REUSE_NN  = False     # lê previsões NN
-RESET_XGB = True      # apaga artefatos XGB
+RESET_XGB = False      # apaga artefatos XGB
 RESET_NN  = False     # apaga artefatos NN
-RUN_COMPARE  = False   # compara resultados
+RUN_COMPARE  = True   # compara resultados
 BATCH_DEF = 50        # tamanho de batch
 
 MAX_PARALLEL_PROCS = 1  # processos simultâneos
