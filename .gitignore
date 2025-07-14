@@ -190,3 +190,5 @@ processing_report.txt
 .vscode/
 
 scripts/output/
+./deploy/config.env
+config.env
