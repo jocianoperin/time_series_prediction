@@ -88,11 +88,22 @@ def processar_produto(csv_name: str,
                       df_raw: pd.DataFrame,
                       xgb_gpu_lock,
                       nn_gpu_lock,
-                      proc_lock):
-    """Pipeline completo (feature eng → model(s) → consolidação) p/ um produto."""
+                      proc_lock,
+                      raw_dir=None):
+    """Pipeline completo (feature eng → model(s) → consolidação) p/ um produto.
+    
+    Args:
+        csv_name: Nome do arquivo CSV
+        df_raw: DataFrame com os dados brutos
+        xgb_gpu_lock: Lock para controle de concorrência do XGBoost
+        nn_gpu_lock: Lock para controle de concorrência da rede neural
+        proc_lock: Lock para controle de processos
+        raw_dir: Diretório de origem dos arquivos brutos (opcional, usado para mover o arquivo após processamento)
+    """
 
     base = os.path.splitext(csv_name)[0]
     barcode = base[len("produto_"):] if base.startswith("produto_") else base
+    processed_successfully = False
 
     logger.info(f"[{barcode}] ▶️  início")
 
@@ -153,8 +164,29 @@ def processar_produto(csv_name: str,
         logger.error(f"[{barcode}] erro: {exc}")
         logger.error(traceback.format_exc())
 
+    except Exception as e:
+        logger.error(f"[{barcode}] Erro durante o processamento: {str(e)}")
+        processed_successfully = False
     finally:
-        free_gpu_memory(); tf.keras.backend.clear_session(); gc.collect(); free_gpu_memory()
+        # Limpeza de recursos
+        free_gpu_memory()
+        tf.keras.backend.clear_session()
+        gc.collect()
+        free_gpu_memory()
+        
+        # Se o processamento foi bem-sucedido e raw_dir foi fornecido, move o arquivo
+        if processed_successfully and raw_dir and os.path.exists(os.path.join(raw_dir, csv_name)):
+            processed_dir = os.path.join(raw_dir, "processed")
+            os.makedirs(processed_dir, exist_ok=True)
+            try:
+                shutil.move(
+                    os.path.join(raw_dir, csv_name),
+                    os.path.join(processed_dir, csv_name)
+                )
+                logger.info(f"[{barcode}] ✅ Arquivo movido para {processed_dir}")
+            except Exception as e:
+                logger.error(f"[{barcode}] ❌ Falha ao mover o arquivo: {str(e)}")
+        
         proc_lock.release()
         logger.info(f"[{barcode}] ⏹️  fim")
 
@@ -165,39 +197,54 @@ def processar_produto(csv_name: str,
 def main(proc_lock, xgb_gpu_lock, nn_gpu_lock):
     logger.info("🚀 Pipeline global iniciado – batch_size=%s", BATCH_SZ)
 
-    raw_dir       = "data/raw"
+    raw_dir = "data/raw"
     processed_dir = os.path.join(raw_dir, "processed")
     os.makedirs(processed_dir, exist_ok=True)
 
-    csv_files = [f for f in os.listdir(raw_dir) if f.endswith(".csv")]
-    total     = len(csv_files)
-    logger.info("📂 %s CSV(s) detectados", total)
+    # Lista todos os arquivos CSV que ainda não foram processados
+    csv_files = [f for f in os.listdir(raw_dir) 
+                if f.endswith(".csv") and not f.startswith(".")]
+    total = len(csv_files)
+    logger.info("📂 %s CSV(s) detectados para processamento", total)
 
+    # Processa em lotes, mas move os arquivos individualmente
     for offset in range(0, total, BATCH_SZ):
         batch = csv_files[offset:offset + BATCH_SZ]
-        logger.info("🔄 Batch %s: %s arquivos", offset // BATCH_SZ + 1, len(batch))
-        procs = []
-
+        logger.info("🔄 Lote %s: processando %s arquivos", 
+                   offset // BATCH_SZ + 1, len(batch))
+        
+        processes = []
+        
+        # Inicia os processos para o lote atual
         for fname in batch:
             path = os.path.join(raw_dir, fname)
-            df   = pd.read_csv(path, parse_dates=["Date"])
-
-            proc_lock.acquire()
-            p = mp.Process(
-                target=processar_produto,
-                args=(fname, df, xgb_gpu_lock, nn_gpu_lock, proc_lock),
-                name=f"proc_{fname}",
-            )
-            p.start()
-            procs.append((p, path, fname))
-
-        for proc, path, fname in procs:
-            proc.join()
-            if proc.exitcode == 0:
-                shutil.move(path, os.path.join(processed_dir, fname))
-                logger.info("✅ %s → processed", fname)
-            else:
-                logger.error("❌ %s falhou (exit=%s)", fname, proc.exitcode)
+            try:
+                df = pd.read_csv(path, parse_dates=["Date"])
+                
+                # Adquire o lock antes de iniciar o processo
+                proc_lock.acquire()
+                
+                # Cria e inicia o processo de processamento
+                p = mp.Process(
+                    target=processar_produto,
+                    args=(fname, df, xgb_gpu_lock, nn_gpu_lock, proc_lock, raw_dir),
+                    name=f"proc_{fname}",
+                    daemon=True
+                )
+                p.start()
+                processes.append(p)
+                
+            except Exception as e:
+                logger.error(f"❌ Erro ao processar {fname}: {str(e)}")
+                proc_lock.release()  # Libera o lock em caso de erro
+        
+        # Aguarda todos os processos do lote atual terminarem
+        for p in processes:
+            p.join()
+            if p.exitcode != 0:
+                logger.warning(f"Processo {p.name} terminou com código de saída {p.exitcode}")
+        
+        logger.info(f"✅ Lote {offset // BATCH_SZ + 1} concluído")
 
     logger.info("🎉 Pipeline completo para %s produtos", total)
 

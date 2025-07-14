@@ -23,14 +23,9 @@ BASE_DATA_DIR = ROOT_DIR / "data"
 # ============================================================
 BARCODES_TO_EXTRACT: list[int] | list[str] = [
     # Lista de códigos de barras que falharam no processamento anterior
-    7896012105177,  # Falhou
-    7896045112081,  # Falhou
-    7896045112418,  # Falhou
-    7896401183069,  # Falhou
-    7896401183076,  # Falhou
-    7896978201234,  # Falhou
-    7898967125323,  # Falhou
-    7898971704415   # Falhou
+    78602731,
+    78908901,
+    78912359
 ]
 
 # ------------------------------------------------------------
