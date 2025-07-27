@@ -183,6 +183,8 @@ data/
 data_backup/
 data-Market2/
 data-Market1/
+analise/
+docs/
 
 # Models
 models/

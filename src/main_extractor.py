@@ -23,9 +23,9 @@ BASE_DATA_DIR = ROOT_DIR / "data"
 # ============================================================
 BARCODES_TO_EXTRACT: list[int] | list[str] = [
     # Lista de códigos de barras que falharam no processamento anterior
-    78602731,
-    78908901,
-    78912359
+    7896004008479,
+    7896978201258,
+    7896978201265
 ]
 
 # ------------------------------------------------------------
